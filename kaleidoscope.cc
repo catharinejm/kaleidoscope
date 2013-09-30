@@ -33,6 +33,8 @@ enum Token {
     tok_for = -9, tok_in = -10,
     // operators
     tok_unary = -11, tok_binary = -12,
+    // var definition
+    tok_var = -13,
 };
 
 static std::string IdentifierStr; // Filled in if tok_identifier
@@ -80,6 +82,7 @@ static int gettok() {
         if (IdentifierStr == "in") return tok_in;
         if (IdentifierStr == "binary") return tok_binary;
         if (IdentifierStr == "unary") return tok_unary;
+        if (IdentifierStr == "var") return tok_var;
         return tok_identifier;
     }
 
@@ -222,6 +225,63 @@ public:
         : Opcode(opcode), Operand(operand) {}
     virtual Value *Codegen();
 };
+
+// Expression class for var/in
+class VarExprAST : public ExprAST {
+    std::vector<std::pair<std::string, ExprAST*> > VarNames;
+    ExprAST *Body;
+public:
+    VarExprAST(const std::vector<std::pair<std::string, ExprAST*> > &varnames, ExprAST *body)
+        : VarNames(varnames), Body(body) {}
+
+    virtual Value *Codegen();
+};
+
+Value *VarExprAST::Codegen() {
+    std::vector<AllocaInst*> OldBindings;
+
+    Function *TheFunction = Builder.GetInsertBlock()->getParent();
+
+    // Register all variables and emit their initializer
+    for (unsigned i = 0, e = VarNames.size(); i != e; ++i) {
+        const std::string &VarName = VarNames[i].first;
+        ExprAST *Init = VarNames[i].second;
+
+        // Emit the initializer before adding the variable to scope. This
+        // prevents the initializer from referencing the varaible itself, and
+        // permits stuff like this:
+        //   var a = 1 in
+        //     var a = a in ... # refers to outar 'a'.
+        Value *InitVal;
+        if (Init) {
+            InitVal = Init->Codegen();
+            if (!InitVal) return 0;
+        } else { // If not specified, use 0.0.
+            InitVal = ConstantFP::get(getGlobalContext(), APFloat(0.0));
+        }
+
+        AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, VarName);
+        Builder.CreateStore(InitVal, Alloca);
+
+        // Remember the old variable binding so that we can restore the binding
+        // when we unrecurse
+        OldBindings.push_back(NamedValues[VarName]);
+
+        // Remember this binding
+        NamedValues[VarName] = Alloca;
+    }
+
+    // Codegen the body, now that all vars are in scope
+    Value *BodyVal = Body->Codegen();
+    if (!BodyVal) return 0;
+
+    // Pop all our variables from scope
+    for (unsigned i = 0, e = VarNames.size(); i != e; ++i)
+        NamedValues[VarNames[i].first] = OldBindings[i];
+
+    // return the body computation
+    return BodyVal;
+}
 
 // Expression class for function calls
 class CallExprAST : public ExprAST {
@@ -714,10 +774,56 @@ static ExprAST *ParseIdentifierExpr() {
     return new CallExprAST(IdName, Args);
 }
 
+// varexpr ::= 'var' identifier ('=' expression)?
+//                   (',' identifier ('=' expression)?)* 'in' expression
+static ExprAST *ParseVarExpr() {
+    getNextToken(); // eat 'var'
+    std::vector<std::pair<std::string, ExprAST*> > VarNames;
+
+    // At least one variable name is required
+    if (CurTok != tok_identifier)
+        return Error("expected identifier after var");
+
+    for (;;) {
+        std::string Name = IdentifierStr;
+        getNextToken(); // eat the identifier
+
+        // Read the optional initializer
+        ExprAST *Init = 0;
+        if (CurTok == '=') {
+            getNextToken(); // eat the '='
+
+            Init = ParseExpression();
+            if (!Init) return 0;
+        }
+
+        VarNames.push_back(std::make_pair(Name, Init));
+
+        // End of var list, exit loop
+        if (CurTok != ',') break;
+        getNextToken(); // eat the ','
+
+        if (CurTok != tok_identifier)
+            return Error("expected identifier list after var");
+    }
+
+    if (CurTok != tok_in)
+        return Error("expected 'in' keyword after 'var'");
+    getNextToken(); // eat 'in'
+
+    ExprAST *Body = ParseExpression();
+    if (!Body) return 0;
+
+    return new VarExprAST(VarNames, Body);
+}
+
 // primary
 //   ::= identifierexpr
 //   ::= numberexpr
 //   ::= parenexpr
+//   ::= ifexpr
+//   ::= forexpr
+//   ::= varexpr
 static ExprAST *ParsePrimary() {
     switch (CurTok) {
     case tok_identifier: return ParseIdentifierExpr();
@@ -725,6 +831,7 @@ static ExprAST *ParsePrimary() {
     case '(': return ParseParenExpr();
     case tok_if: return ParseIfExpr();
     case tok_for: return ParseForExpr();
+    case tok_var: return ParseVarExpr();
     default: return Error("unknown token when expecting an expression");
     }
 }
