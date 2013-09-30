@@ -28,6 +28,8 @@ enum Token {
     tok_def = -2, tok_extern = -3,
     // primary
     tok_identifier = -4, tok_number = -5,
+    // control
+    tok_if = -6, tok_then = -7, tok_else = -8,
 };
 
 static std::string IdentifierStr; // Filled in if tok_identifier
@@ -68,6 +70,9 @@ static int gettok() {
 
         if (IdentifierStr == "def") return tok_def;
         if (IdentifierStr == "extern") return tok_extern;
+        if (IdentifierStr == "if") return tok_if;
+        if (IdentifierStr == "then") return tok_then;
+        if (IdentifierStr == "else") return tok_else;
         return tok_identifier;
     }
 
@@ -190,6 +195,64 @@ Value * CallExprAST::Codegen() {
     return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
 }
 
+
+// Expression class for if/then/else
+class IfExprAST : public ExprAST {
+    ExprAST *Cond, *Then, *Else;
+public:
+    IfExprAST(ExprAST *cond, ExprAST *then, ExprAST *_else)
+        : Cond(cond), Then(then), Else(_else) {}
+
+    virtual Value *Codegen();
+};
+
+Value *IfExprAST::Codegen() {
+    Value *CondV = Cond->Codegen();
+    if (!CondV) return 0;
+
+    // Convert condition to a bool bu comparing equal to 0.0.
+    CondV = Builder.CreateFCmpONE(CondV, ConstantFP::get(getGlobalContext(), APFloat(0.0)), "ifcond");
+
+    Function *TheFunction = Builder.GetInsertBlock()->getParent();
+
+    // Create blocks for the 'then' and 'else' cases. Insert the 'then' block at
+    // the end of the function
+    BasicBlock *ThenBB = BasicBlock::Create(getGlobalContext(), "then", TheFunction);
+    BasicBlock *ElseBB = BasicBlock::Create(getGlobalContext(), "else");
+    BasicBlock *MergeBB = BasicBlock::Create(getGlobalContext(), "ifcont");
+
+    Builder.CreateCondBr(CondV, ThenBB, ElseBB);
+
+    // Emit the value
+    Builder.SetInsertPoint(ThenBB);
+
+    Value *ThenV = Then->Codegen();
+    if (!ThenV) return 0;
+
+    Builder.CreateBr(MergeBB);
+    // Codegen of 'Then' can change the current block, update ThenBB for the PHI
+    ThenBB = Builder.GetInsertBlock();
+
+    // Emit else block
+    TheFunction->getBasicBlockList().push_back(ElseBB);
+    Builder.SetInsertPoint(ElseBB);
+
+    Value *ElseV = Else->Codegen();
+    if (!ElseV) return 0;
+
+    Builder.CreateBr(MergeBB);
+    // Codegen of Else can change the current block, update ElseBB for the PHI
+    ElseBB = Builder.GetInsertBlock();
+
+    // Emit merge block
+    TheFunction->getBasicBlockList().push_back(MergeBB);
+    Builder.SetInsertPoint(MergeBB);
+    PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(getGlobalContext()), 0, "iftmp");
+
+    PN->addIncoming(ThenV, ThenBB);
+    PN->addIncoming(ElseV, ElseBB);
+    return PN;
+}
 
 // This class represents the "prototype" for a function, which captures its name
 // and its arguments names (thus implicitly the number of arguments the function
@@ -327,6 +390,31 @@ static ExprAST *ParseExpression() {
     return ParseBinOpRHS(0, LHS);
 }
 
+// ifexpr ::= 'if' expression 'then' expression 'else' expression
+static ExprAST *ParseIfExpr() {
+    getNextToken(); // eat the 'if'
+
+    // condition
+    ExprAST *Cond = ParseExpression();
+    if (!Cond) return 0;
+
+    if (CurTok != tok_then)
+        return Error("expected then");
+    getNextToken(); // eat the 'then'
+
+    ExprAST *Then = ParseExpression();
+    if (!Then) return 0;
+
+    if (CurTok != tok_else)
+        return Error("Expected else");
+    getNextToken(); // eat the 'else'
+
+    ExprAST *Else = ParseExpression();
+    if (!Else) return 0;
+
+    return new IfExprAST(Cond, Then, Else);
+}
+
 // numberexpr ::= number
 static ExprAST *ParseNumberExpr() {
     ExprAST *Result = new NumberExprAST(NumVal);
@@ -389,6 +477,7 @@ static ExprAST *ParsePrimary() {
     case tok_identifier: return ParseIdentifierExpr();
     case tok_number: return ParseNumberExpr();
     case '(': return ParseParenExpr();
+    case tok_if: return ParseIfExpr();
     default: return Error("unknown token when expecting an expression");
     }
 }
