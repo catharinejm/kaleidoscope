@@ -30,6 +30,7 @@ enum Token {
     tok_identifier = -4, tok_number = -5,
     // control
     tok_if = -6, tok_then = -7, tok_else = -8,
+    tok_for = -9, tok_in = -10,
 };
 
 static std::string IdentifierStr; // Filled in if tok_identifier
@@ -73,6 +74,8 @@ static int gettok() {
         if (IdentifierStr == "if") return tok_if;
         if (IdentifierStr == "then") return tok_then;
         if (IdentifierStr == "else") return tok_else;
+        if (IdentifierStr == "for") return tok_for;
+        if (IdentifierStr == "in") return tok_in;
         return tok_identifier;
     }
 
@@ -254,6 +257,88 @@ Value *IfExprAST::Codegen() {
     return PN;
 }
 
+// Expression class for for/in
+class ForExprAST : public ExprAST {
+    std::string VarName;
+    ExprAST *Start, *End, *Step, *Body;
+public:
+    ForExprAST(const std::string &varname, ExprAST *start, ExprAST *end,
+               ExprAST *step, ExprAST *body)
+        : VarName(varname), Start(start), End(end), Step(step), Body(body) {}
+    virtual Value *Codegen();
+};
+
+Value *ForExprAST::Codegen() {
+    // Emit the start code first without 'variable' in scope
+    Value *StartVal = Start->Codegen();
+    if (!StartVal) return 0;
+
+    Function *TheFunction = Builder.GetInsertBlock()->getParent();
+    BasicBlock *PreheaderBB = Builder.GetInsertBlock();
+    BasicBlock *LoopBB = BasicBlock::Create(getGlobalContext(), "loop", TheFunction);
+
+    // Insert an explicit fall through from the current block to LoopBB
+    Builder.CreateBr(LoopBB);
+
+    // Start insertion in LoopBB
+    Builder.SetInsertPoint(LoopBB);
+
+    // Start the PHI node with an entry for Start
+    PHINode *Variable = Builder.CreatePHI(Type::getDoubleTy(getGlobalContext()), 2, VarName.c_str());
+    Variable->addIncoming(StartVal, PreheaderBB);
+
+    // Within the loop, the variable is defined equal to the PHI node. If it
+    // shadoes an existing variable, we have to restore it, so save it now.
+    Value *OldVal = NamedValues[VarName];
+    NamedValues[VarName] = Variable;
+
+    // Emit the body of the loop. This, like any other expr, can change the
+    // current BB. Node that we ignore the value computed by the body, but don't
+    // allow an error.
+    if (!Body->Codegen()) return 0;
+
+    // Emit the step value.
+    Value *StepVal;
+    if (Step) {
+        StepVal = Step->Codegen();
+        if (!StepVal) return 0;
+    } else {
+        // If not specified, use 1.0
+        StepVal = ConstantFP::get(getGlobalContext(), APFloat(1.0));
+    }
+
+    Value *NextVar = Builder.CreateFAdd(Variable, StepVal, "nextvar");
+
+    // Compute the end condition
+    Value *EndCond = End->Codegen();
+    if (!EndCond) return 0;
+
+    // convert condition to a bool by comparing equal to 0.0
+    EndCond = Builder.CreateFCmpONE(EndCond, ConstantFP::get(getGlobalContext(), APFloat(0.0)), "loopcond");
+
+    // Create the "after loop" block and insert it
+    BasicBlock *LoopEndBB = Builder.GetInsertBlock();
+    BasicBlock *AfterBB = BasicBlock::Create(getGlobalContext(), "afterloop", TheFunction);
+
+    // insert the conditional branch into the end of LoopEndBB
+    Builder.CreateCondBr(EndCond, LoopBB, AfterBB);
+
+    // any new code will be inserted in AfterBB
+    Builder.SetInsertPoint(AfterBB);
+
+    // Add a new entry to the PHI node for the backedge
+    Variable->addIncoming(NextVar, LoopEndBB);
+
+    // Restore the unshadowed variable.
+    if (OldVal)
+        NamedValues[VarName] = OldVal;
+    else
+        NamedValues.erase(VarName);
+
+    // for expr always returns 0.0
+    return Constant::getNullValue(Type::getDoubleTy(getGlobalContext()));
+}
+
 // This class represents the "prototype" for a function, which captures its name
 // and its arguments names (thus implicitly the number of arguments the function
 // takes).
@@ -415,6 +500,47 @@ static ExprAST *ParseIfExpr() {
     return new IfExprAST(Cond, Then, Else);
 }
 
+// forexpr ::= 'for' identifier '=' expr ',' expr (',' expr)? 'in' expression
+static ExprAST *ParseForExpr() {
+    getNextToken(); // eat the 'for'
+
+    if (CurTok != tok_identifier)
+        return Error("expected identifier after 'for'");
+
+    std::string IdName = IdentifierStr;
+    getNextToken(); // eat identifier
+
+    if (CurTok != '=')
+        return Error("expected '=' after 'for'");
+    getNextToken(); // eat '='
+
+    ExprAST *Start = ParseExpression();
+    if (!Start) return 0;
+    if (CurTok != ',')
+        return Error("expected ',' after for start value");
+    getNextToken(); // eat '='
+    
+    ExprAST *End = ParseExpression();
+    if (!End) return 0;
+
+    // The step value is optional
+    ExprAST *Step = 0;
+    if (CurTok == ',') {
+        getNextToken();
+        Step = ParseExpression();
+        if (!Step) return 0;
+    }
+
+    if (CurTok != tok_in)
+        return Error("expected 'in' after 'for'");
+    getNextToken(); // eat 'in'
+
+    ExprAST *Body = ParseExpression();
+    if (!Body) return 0;
+
+    return new ForExprAST(IdName, Start, End, Step, Body);
+}
+
 // numberexpr ::= number
 static ExprAST *ParseNumberExpr() {
     ExprAST *Result = new NumberExprAST(NumVal);
@@ -478,6 +604,7 @@ static ExprAST *ParsePrimary() {
     case tok_number: return ParseNumberExpr();
     case '(': return ParseParenExpr();
     case tok_if: return ParseIfExpr();
+    case tok_for: return ParseForExpr();
     default: return Error("unknown token when expecting an expression");
     }
 }
