@@ -68,9 +68,9 @@ static int gettok() {
     while (isspace(LastChar))
         LastChar = getchar();
 
-    if (isalpha(LastChar)) {
+    if (isalpha(LastChar) || LastChar == '_') {
         IdentifierStr = LastChar;
-        while (isalnum((LastChar = getchar())))
+        for (LastChar = getchar(); isalnum(LastChar) || LastChar == '_'; LastChar = getchar())
             IdentifierStr += LastChar;
 
         if (IdentifierStr == "def") return tok_def;
@@ -228,10 +228,11 @@ public:
 
 // Expression class for var/in
 class VarExprAST : public ExprAST {
-    std::vector<std::pair<std::string, ExprAST*> > VarNames;
+    std::vector<std::tuple<std::string, Type*, ExprAST*> > VarNames;
     ExprAST *Body;
 public:
-    VarExprAST(const std::vector<std::pair<std::string, ExprAST*> > &varnames, ExprAST *body)
+    VarExprAST(const std::vector<std::tuple<std::string, Type*, ExprAST*> > &varnames,
+               ExprAST *body)
         : VarNames(varnames), Body(body) {}
 
     virtual Value *Codegen();
@@ -568,7 +569,7 @@ Function *FunctionAST::Codegen() {
         // finish off the function
         Builder.CreateRet(RetVal);
 
-        // validate the fenerate code, checking for consistency
+        // validate the generated code, checking for consistency
         verifyFunction(*TheFunction);
 
         // optimize the function
@@ -774,19 +775,35 @@ static ExprAST *ParseIdentifierExpr() {
     return new CallExprAST(IdName, Args);
 }
 
+Type * ParseTypeFromName(const std::string &name) {
+    if (name == "int") return Type::getInt32Ty(getGlobalContext());
+    if (name == "long") return Type::getInt64Ty(getGlobalContext());
+    if (name == "float") return Type::getFloatTy(getGlobalContext());
+    if (name == "double") return Type::getDoubleTy(getGlobalContext());
+    if (name == "char") return Type::getInt8Ty(getGlobalContext());
+    if (name == "bool") return Type::getInt1Ty(getGlobalContext());
+    return 0;
+}
+
 // varexpr ::= 'var' identifier ('=' expression)?
 //                   (',' identifier ('=' expression)?)* 'in' expression
 static ExprAST *ParseVarExpr() {
     getNextToken(); // eat 'var'
-    std::vector<std::pair<std::string, ExprAST*> > VarNames;
+    std::vector<std::tuple<std::string, Type*, ExprAST*> > VarNames;
 
-    // At least one variable name is required
+    // At least one variable declaration is required
     if (CurTok != tok_identifier)
-        return Error("expected identifier after var");
+        return Error("expected type after var");
 
     for (;;) {
+        Type * Ty = ParseTypeFromName(IdentifierStr);
+        if (!Ty)
+            return Error(("Invalid type: "+IdentifierStr).c_str());
+        getNextToken(); // eat the type
+        if (CurTok != tok_identifier)
+            return Error("expected identifier after type");
         std::string Name = IdentifierStr;
-        getNextToken(); // eat the identifier
+        getNextToken(); // eat the name
 
         // Read the optional initializer
         ExprAST *Init = 0;
@@ -797,7 +814,7 @@ static ExprAST *ParseVarExpr() {
             if (!Init) return 0;
         }
 
-        VarNames.push_back(std::make_pair(Name, Init));
+        VarNames.push_back(std::make_tuple(Name, Init));
 
         // End of var list, exit loop
         if (CurTok != ',') break;
@@ -830,7 +847,7 @@ static ExprAST *ParsePrimary() {
     case tok_number: return ParseNumberExpr();
     case '(': return ParseParenExpr();
     case tok_if: return ParseIfExpr();
-    case tok_for: return ParseForExpr();
+    case tok_for: return ForExpr();
     case tok_var: return ParseVarExpr();
     default: return Error("unknown token when expecting an expression");
     }
@@ -945,7 +962,7 @@ static void HandleExtern() {
             F->dump();
         }
     } else {
-        // skip token for errror recovery
+        // skip token for error recovery
         getNextToken();
     }
 }
