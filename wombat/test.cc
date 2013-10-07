@@ -6,6 +6,8 @@
 
 using namespace std;
 
+enum WTYPE { NIL_TYPE=0, DOUBLE, SYMBOL, CONS, POINTER };
+
 union WVAL {
     double d;
     void *p;
@@ -14,11 +16,35 @@ union WVAL {
 class WVal {
 public:
     WVAL val;
+    WTYPE ty;
     
     WVal() {}
-    WVal(WVAL v) : val(v) {}
+    WVal(WTYPE t) : ty(t) {}
     WVal(const WVal &other) : val(other.val) {}
 };
+
+class Number : public WVal {
+public:
+    Number(double d) : WVal(DOUBLE) {
+        val.d = d;
+    }
+};
+
+const WVal NIL(NIL_TYPE);
+
+class Cons : public WVal {
+public:
+    WVal head, tail;
+    Cons(WVal hd, WVal tl) : WVal(CONS), head(hd), tail(tl) {
+        val.p = (void*)this;
+    }
+    Cons(const WVal &other) : WVal(other) {
+        Cons o = static_cast<Cons>(other);
+        head = o.head;
+        tail = o.tail;
+    }
+};
+
 
 class Symbol : public WVal {
     Symbol(const string *np) : WVal() {
@@ -36,6 +62,9 @@ public:
     const string &name() const { return *(string*)val.p; }
 };
 
+WVal build_cons(WVal h, WVal t) {
+    return Cons(h, t);
+}
 
 
 int main() {
@@ -53,5 +82,10 @@ int main() {
     cout << "b.name(): " << b.name() << endl
          << "&b.name(): " << &b.name() << endl;
 
+    Number n(10);
+    Cons c(build_cons(n, NIL));
+
+    cout << "c.head.val: " << c.head.val.d << endl;
+            
     return 0;
 }

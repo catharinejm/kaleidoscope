@@ -68,15 +68,40 @@ public:
     const string &name() const { return *(string*)val.p; }
 };
 
-int eat_whitespace(FILE * io) {
+void eat_whitespace(FILE * io) {
     int cur;
     do cur = getc(io);
     while (isspace(cur));
-    return cur;
+    ungetc(cur, io);
+}
+
+WVal read_list(FILE * io) {
+    int cur;
+    eat_whitespace(io);
+
+    cur = getc(io);
+    if (cur == ')')
+        return NIL;
+
+    ungetc(cur, io);
+    WVal head, tail;
+    head = read_form(io);
+    eat_whitespace(io);
+
+    cur = getc(io);
+    if (cur == '.')
+        tail = read_form(io);
+    else
+        tail = read_list(io);
+
+    return Cons(head, tail);
 }
 
 WVal read_form(FILE * io) {
-    int cur = eat_whitespace(io);
+    int cur;
+    eat_whitespace(io);
+    cur = getc(io);
+
     if (cur == EOF) {
         fprintf(stderr, "^D");
         exit(0);
