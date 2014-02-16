@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include <gc/gc_cpp.h>
+
 using namespace llvm;
 
 static int gettok();
@@ -108,8 +110,15 @@ static int gettok() {
     return ThisChar;
 }
 
-// Base class for all expression nodes
-class ExprAST {
+// Create an alloca instruction in the entry block of the function. This is used
+// for mutable variables, etc.
+static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction, const std::string &VarName) {
+    IRBuilder<> TmpB(&TheFunction->getEntryBlock(), TheFunction->getEntryBlock().begin());
+    return TmpB.CreateAlloca(Type::getDoubleTy(getGlobalContext()), 0, VarName.c_str());
+}
+
+// base class for all expression nodes
+class ExprAST : public gc {
 public:
     virtual ~ExprAST() {}
     virtual Value *Codegen() = 0;
@@ -160,6 +169,7 @@ Value *BinaryExprAST::Codegen() {
     case '+': return Builder.CreateFAdd(L, R, "addtmp");
     case '-': return Builder.CreateFSub(L, R, "subtmp");
     case '*': return Builder.CreateFMul(L, R, "multmp");
+    case '/': return Builder.CreateFDiv(L, R, "divtmp");
     case '<':
         L = Builder.CreateFCmpULT(L, R, "cmptmp");
         // Convert bool 0/1 to double 0.0 or 1.0
@@ -213,7 +223,7 @@ Value *IfExprAST::Codegen() {
     Value *CondV = Cond->Codegen();
     if (!CondV) return 0;
 
-    // Convert condition to a bool bu comparing equal to 0.0.
+    // Convert condition to a bool by comparing equal to 0.0.
     CondV = Builder.CreateFCmpONE(CondV, ConstantFP::get(getGlobalContext(), APFloat(0.0)), "ifcond");
 
     Function *TheFunction = Builder.GetInsertBlock()->getParent();
@@ -685,7 +695,7 @@ static void HandleExtern() {
 }
 
 static void HandleTopLevelExpression() {
-    // Evaluate top-leve expression into an anonymous function
+    // Evaluate top-level expression into an anonymous function
     if (FunctionAST *F = ParseTopLevelExpr()) {
         if (Function *LF = F->Codegen()) {
             LF->dump(); // Dump the function for exposition purposes
@@ -731,13 +741,14 @@ int main() {
     BinopPrecedence['+'] = 20;
     BinopPrecedence['-'] = 20;
     BinopPrecedence['*'] = 40;
+    BinopPrecedence['/'] = 40;
 
     // Prime the first token
     fprintf(stderr, "ready> ");
     getNextToken();
 
     // Make the moodule, which holds all the code
-    TheModule = new Module("my cool jit", Context);
+    TheModule = new (GC) Module("my cool jit", Context);
 
     std::string ErrStr;
     TheExecutionEngine = EngineBuilder(TheModule).setErrorStr(&ErrStr).create();
@@ -750,7 +761,9 @@ int main() {
 
     // Set up the optimizer pipeline. Start with registering info about how the
     // target lays out data structures.
-    OurFPM.add(new DataLayout(*TheExecutionEngine->getDataLayout()));
+    OurFPM.add(new (GC) DataLayout(*TheExecutionEngine->getDataLayout()));
+    // Promote allocas to registers
+    OurFPM.add(createPromoteMemoryToRegisterPass());
     // Provide basic AliasAnalysis support for GVN.
     OurFPM.add(createBasicAliasAnalysisPass());
     // Do simple "peephole" optimizations and bit-twiddling optzns.
