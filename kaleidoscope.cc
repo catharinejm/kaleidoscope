@@ -57,7 +57,6 @@ static IRBuilder<> Builder(getGlobalContext());
 static ExecutionEngine *TheExecutionEngine;
 static FunctionPassManager *TheFPM;
 static std::map<std::string, Value*> NamedValues;
-static std::map<char, int> BinopPrecedence;
 
 static int gettok() {
     static int LastChar = ' ';
@@ -110,13 +109,6 @@ static int gettok() {
     return ThisChar;
 }
 
-// Create an alloca instruction in the entry block of the function. This is used
-// for mutable variables, etc.
-static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction, const std::string &VarName) {
-    IRBuilder<> TmpB(&TheFunction->getEntryBlock(), TheFunction->getEntryBlock().begin());
-    return TmpB.CreateAlloca(Type::getDoubleTy(getGlobalContext()), 0, VarName.c_str());
-}
-
 // base class for all expression nodes
 class ExprAST : public gc {
 public:
@@ -150,33 +142,32 @@ Value *VariableExprAST::Codegen() {
 }
 
 // Expression class for a binary operator
-class BinaryExprAST : public ExprAST {
-    char Op;
-    ExprAST *LHS, *RHS;
-public:
-    BinaryExprAST(char op, ExprAST *lhs, ExprAST *rhs)
-        : Op(op), LHS(lhs), RHS(rhs) {}
+// class BuiltinExprAST : public ExprAST {
+//     char Op;
+//     ExprAST *Args;
+// public:
+//     BuiltinExprAST(char op, ExprAST *args)
+//         : Op(op), Args(args) {}
 
-    virtual Value *Codegen();
-};
+//     virtual Value *Codegen();
+// };
 
-Value *BinaryExprAST::Codegen() {
-    Value *L = LHS->Codegen();
-    Value *R = RHS->Codegen();
-    if (!L || !R) return 0;
+// Value *BuiltinExprAST::Codegen() {
+    // Value *L = Args->Codegen();
+    // if (!L) return 0;
 
-    switch (Op) {
-    case '+': return Builder.CreateFAdd(L, R, "addtmp");
-    case '-': return Builder.CreateFSub(L, R, "subtmp");
-    case '*': return Builder.CreateFMul(L, R, "multmp");
-    case '/': return Builder.CreateFDiv(L, R, "divtmp");
-    case '<':
-        L = Builder.CreateFCmpULT(L, R, "cmptmp");
-        // Convert bool 0/1 to double 0.0 or 1.0
-        return Builder.CreateUIToFP(L, Type::getDoubleTy(getGlobalContext()), "booltmp");
-    default: return ErrorV("invalid binary operator");
-    }
-}
+    // switch (Op) {
+    // case '+': return Builder.CreateFAdd(L, R, "addtmp");
+    // case '-': return Builder.CreateFSub(L, R, "subtmp");
+    // case '*': return Builder.CreateFMul(L, R, "multmp");
+    // case '/': return Builder.CreateFDiv(L, R, "divtmp");
+    // case '<':
+    //     L = Builder.CreateFCmpULT(L, R, "cmptmp");
+    //     // Convert bool 0/1 to double 0.0 or 1.0
+    //     return Builder.CreateUIToFP(L, Type::getDoubleTy(getGlobalContext()), "booltmp");
+    // default: return ErrorV("invalid binary operator");
+    // }
+// }
 
 // Expression class for function calls
 class CallExprAST : public ExprAST {
@@ -438,53 +429,6 @@ Function *FunctionAST::Codegen() {
     return 0;
 }
 
-static ExprAST *ParsePrimary();
-
-static int GetTokPrecedence() {
-    if (!isascii(CurTok))
-        return -1;
-
-    int TokPrec = BinopPrecedence[CurTok];
-    if (TokPrec <= 0) return -1;
-    return TokPrec;
-}
-
-static ExprAST *ParseBinOpRHS(int ExprPrec, ExprAST *LHS) {
-    // if this is binop, find its precedence
-    for (;;) {
-        int TokPrec = GetTokPrecedence();
-
-        // if this is a binop that binds at least as tightly as the current binop,
-        // consume it, otherwise we are done
-        if (TokPrec < ExprPrec)
-            return LHS;
-
-        // Okay we now this is a binop
-        int BinOp = CurTok;
-        getNextToken(); // eat binop
-
-        ExprAST *RHS = ParsePrimary();
-        if (!RHS) return 0;
-
-        int NextPrec = GetTokPrecedence();
-        if (TokPrec < NextPrec) {
-            RHS = ParseBinOpRHS(TokPrec+1, RHS);
-            if (RHS == 0) return 0;
-        }
-        // Merge LHS/RHS
-        LHS = new BinaryExprAST(BinOp, LHS, RHS);
-    }
-}
-
-// expression
-//   ::= primary binoprhs
-static ExprAST *ParseExpression() {
-    ExprAST *LHS = ParsePrimary();
-    if (!LHS) return 0;
-
-    return ParseBinOpRHS(0, LHS);
-}
-
 // ifexpr ::= 'if' expression 'then' expression 'else' expression
 static ExprAST *ParseIfExpr() {
     getNextToken(); // eat the 'if'
@@ -608,13 +552,11 @@ static ExprAST *ParseIdentifierExpr() {
 //   ::= identifierexpr
 //   ::= numberexpr
 //   ::= parenexpr
-static ExprAST *ParsePrimary() {
+static ExprAST *ParseExpression() {
     switch (CurTok) {
     case tok_identifier: return ParseIdentifierExpr();
     case tok_number: return ParseNumberExpr();
-    case '(': return ParseParenExpr();
-    case tok_if: return ParseIfExpr();
-    case tok_for: return ParseForExpr();
+    case '(': return ParseListExpr();
     default: return Error("unknown token when expecting an expression");
     }
 }
@@ -733,15 +675,15 @@ double putchard(double X) {
     return 0;
 }
 
+extern "C"
+double printd(double X) {
+    printf("%f\n", X);
+    return 0;
+}
+
 int main() {
     InitializeNativeTarget();
     LLVMContext &Context = getGlobalContext();
-    
-    BinopPrecedence['<'] = 10;
-    BinopPrecedence['+'] = 20;
-    BinopPrecedence['-'] = 20;
-    BinopPrecedence['*'] = 40;
-    BinopPrecedence['/'] = 40;
 
     // Prime the first token
     fprintf(stderr, "ready> ");
