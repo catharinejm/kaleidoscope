@@ -20,6 +20,7 @@ public:
 class ReaderError : public LispException {
 public:
     ReaderError(string m) : LispException(m) {}
+    ReaderError(string m, string rest) : LispException(m + rest) {}
 };
 
 class Form;
@@ -97,6 +98,8 @@ inline Pair *as_pair(Form *f) { return static_cast<Pair*>(f); }
 inline Symbol *as_symbol(Form *f) { return static_cast<Symbol*>(f); }
 inline Int *as_int(Form *f) { return static_cast<Int*>(f); }
 inline Float *as_float(Form *f) { return static_cast<Float*>(f); }
+
+inline Pair *cons(Form *a, Form *d) { return new Pair(a, d); }
 
 static void _dbg(Form *f) { cerr << "DEBUG: " << typeid(*f).name() << endl; }
 

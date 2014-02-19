@@ -22,37 +22,33 @@ Number *read_number(istream &input) {
     bool is_neg = cur == '-';
     if (is_neg) cur = input.get();
     if (cur == '0') {
-        if (input.eof())
-            return new Int(0);
-        else {
-            cur = input.get();
-            if (cur == '.') {
-                string num_str("0.");
-                while (is_sym_char(cur = input.get()))
-                    num_str += cur;
-                input.unget();
-                double num;
-                istringstream num_stream(num_str);
-                num_stream >> num;
-                if (!num_stream.eof())
-                    throw ReaderError("Extraneous characters after number input");
-                return new Float(is_neg ? -num : num);
-            }
-
-            long num;
-            if (cur == 'x' || cur == 'X')
-                input >> hex >> num;
-            else if (isdigit(cur)) {
-                input.unget();
-                input >> oct >> num;
-            }
-            if (is_sym_char(input.get()))
-                throw ReaderError("Extraneous characters after number input");
-            else {
-                input.unget();
-                return new Int(is_neg ? -num : num);
-            }
+        cur = input.get();
+        if (cur == '.') {
+            string num_str("0.");
+            while (is_sym_char(cur = input.get()))
+                num_str += cur;
+            input.unget();
+            double num;
+            istringstream num_stream(num_str);
+            num_stream >> num;
+            if (!num_stream.eof())
+                throw ReaderError("Extraneous characters after number input: ", num_stream.str());
+            return new Float(is_neg ? -num : num);
         }
+
+        long num;
+        if (cur == 'x' || cur == 'X')
+            input >> hex >> num;
+        else if (isdigit(cur)) {
+            input.unget();
+            input >> oct >> num;
+        }
+        if (is_sym_char(input.peek())) {
+            string extra;
+            input >> extra;
+            throw ReaderError("Extraneous characters after number input: ", extra);
+        } else
+            return new Int(is_neg ? -num : num);
     } else {
         string num_str;
         num_str += cur;
@@ -70,7 +66,7 @@ Number *read_number(istream &input) {
             num_stream >> num;
             
             if (!num_stream.eof())
-                throw ReaderError("Extraneous characters after number input");
+                throw ReaderError("Extraneous characters after number input: ", num_stream.str());
 
             return new Float(is_neg ? -num : num);
         } else {
@@ -78,7 +74,7 @@ Number *read_number(istream &input) {
             num_stream >> num;
 
             if (!num_stream.eof())
-                throw ReaderError("Extraneous characters after number input");
+                throw ReaderError("Extraneous characters after number input: ", num_stream.str());
             
             return new Int(is_neg ? -num : num);
         }
@@ -87,11 +83,11 @@ Number *read_number(istream &input) {
 
 Symbol *read_symbol(istream &input) {
     string sym;
-    char cur;
-    do {
-        cur = input.get();
+    char cur = input.get();
+    while(is_sym_char(cur)) {
         sym += cur;
-    } while (is_sym_char(cur));
+        cur = input.get();
+    } 
     input.unget();
     return new Symbol(sym);
 }
@@ -128,9 +124,10 @@ Form *read_form(istream &input) {
     }
     if (cur == '(')
         return read_list(input);
-    if (cur == '\'')
-        return new Pair(new Symbol("quote"), read_form(input));
-    if (is_sym_char(cur)) {
+    if (cur == '\'') {
+        Form *f = read_form(input);
+        return cons(new Symbol("quote"), cons(f, NIL));
+    } if (is_sym_char(cur)) {
         input.unget();
         return read_symbol(input);
     }
