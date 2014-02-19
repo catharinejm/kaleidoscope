@@ -12,3 +12,15 @@ clean:
 
 run: clean all
 	./kaleidoscope
+
+lisp:
+	$(CC) -ggdb $(BDWGC_OPTS) -o lisp reader.cc printer.cc lisp.cc
+
+lispclean:
+	rm -f lisp
+
+lisprun: lispclean lisp
+	./lisp
+
+lispdebug: lispclean lisp
+	gdb lisp

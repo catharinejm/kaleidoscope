@@ -1,4 +1,4 @@
-#include "reader.h"
+#include "lisp.h"
 
 #include <cctype>
 #include <sstream>
@@ -19,6 +19,8 @@ inline bool is_sym_char(char c) {
 
 Number *read_number(istream &input) {
     char cur = input.get();
+    bool is_neg = cur == '-';
+    if (is_neg) cur = input.get();
     if (cur == '0') {
         if (input.eof())
             return new Int(0);
@@ -28,12 +30,13 @@ Number *read_number(istream &input) {
                 string num_str("0.");
                 while (is_sym_char(cur = input.get()))
                     num_str += cur;
+                input.unget();
                 double num;
                 istringstream num_stream(num_str);
                 num_stream >> num;
                 if (!num_stream.eof())
                     throw ReaderError("Extraneous characters after number input");
-                return new Float(num);
+                return new Float(is_neg ? -num : num);
             }
 
             long num;
@@ -47,7 +50,7 @@ Number *read_number(istream &input) {
                 throw ReaderError("Extraneous characters after number input");
             else {
                 input.unget();
-                return new Int(num);
+                return new Int(is_neg ? -num : num);
             }
         }
     } else {
@@ -59,6 +62,7 @@ Number *read_number(istream &input) {
                 is_float = true;
             num_str += cur;
         }
+        input.unget();
         
         istringstream num_stream(num_str);
         if (is_float) {
@@ -68,7 +72,7 @@ Number *read_number(istream &input) {
             if (!num_stream.eof())
                 throw ReaderError("Extraneous characters after number input");
 
-            return new Float(num);
+            return new Float(is_neg ? -num : num);
         } else {
             long num;
             num_stream >> num;
@@ -76,7 +80,7 @@ Number *read_number(istream &input) {
             if (!num_stream.eof())
                 throw ReaderError("Extraneous characters after number input");
             
-            return new Int(num);
+            return new Int(is_neg ? -num : num);
         }
     }
 }
@@ -96,14 +100,18 @@ Pair *read_list(istream &input) {
     char cur = killws(input);
 
     if (cur == ')')
-        return NIL;
+        return (Pair*)NIL;
     
+    input.unget();
     Form *car = read_form(input);
     cur = killws(input);
     Form *cdr;
-    if (cur == '.')
+    if (cur == '.') {
         cdr = read_form(input);
-    else {
+        cur = killws(input);
+        if (cur != ')')
+            throw ReaderError("only one element may succeed '.' in an irregular list");
+    } else {
         input.unget();
         cdr = read_list(input);
     }
@@ -114,15 +122,21 @@ Pair *read_list(istream &input) {
 Form *read_form(istream &input) {
     char cur = killws(input);
 
-    if (isdigit(cur)) {
+    if (isdigit(cur) || cur == '-') {
         input.unget();
         return read_number(input);
-    } else if (cur == '(')
+    }
+    if (cur == '(')
         return read_list(input);
-    else if (cur == '\'')
+    if (cur == '\'')
         return new Pair(new Symbol("quote"), read_form(input));
-    else {
+    if (is_sym_char(cur)) {
         input.unget();
         return read_symbol(input);
     }
+
+    input.unget();
+    string extra;
+    input >> extra;
+    throw ReaderError(string("Extraneous input: ") + extra);
 }
