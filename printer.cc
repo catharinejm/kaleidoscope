@@ -41,12 +41,12 @@ string print_number(Number *n) {
 
 string print_int(Int *i) {
     ostringstream intstr;
-    intstr << dec << i->val();
+    intstr << dec << i->long_val();
     return intstr.str();
 }
 
 string print_float(Float *f) {
     ostringstream floatstr;
-    floatstr << f->val();
+    floatstr << f->double_val();
     return floatstr.str();
 }

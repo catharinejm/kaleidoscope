@@ -17,67 +17,78 @@ inline bool is_sym_char(char c) {
     return !is_whitespace(c) && c != '(' && c != ')';
 }
 
-Number *read_number(istream &input) {
-    char cur = input.get();
-    bool is_neg = cur == '-';
-    if (is_neg) cur = input.get();
-    if (cur == '0') {
+Form *read_number(istream &input) {
+    stringstream num_stream;
+    char cur = input.get(), sign = '\0';
+    num_stream << cur;
+    
+    if (cur == '-' || cur == '+') {
+        sign = cur;
         cur = input.get();
-        if (cur == '.') {
-            string num_str("0.");
-            while (is_sym_char(cur = input.get()))
-                num_str += cur;
-            input.unget();
-            double num;
-            istringstream num_stream(num_str);
-            num_stream >> num;
-            if (!num_stream.eof())
-                throw ReaderError("Extraneous characters after number input: ", num_stream.str());
-            return new Float(is_neg ? -num : num);
+        num_stream << cur;
+    }
+        
+    if (cur == '0') {
+        if (!is_sym_char(input.peek()))
+            return new Int(0);
+        
+        cur = input.get();
+        num_stream << cur;
+        
+        char dispatch = cur;
+                
+        while (is_sym_char(cur = input.get()))
+            num_stream << cur;
+        input.unget();
+
+        Number *rval;
+        if (dispatch == '.') {
+            double d;
+            num_stream >> d;
+            rval = new Float(d);
+        } else {
+            long l;
+
+            if (dispatch == 'x' || dispatch == 'X')
+                num_stream >> hex >> l;
+            else if (isdigit(dispatch))
+                num_stream >> oct >> l;
+
+            rval = new Int(l);
         }
 
-        long num;
-        if (cur == 'x' || cur == 'X')
-            input >> hex >> num;
-        else if (isdigit(cur)) {
-            input.unget();
-            input >> oct >> num;
-        }
-        if (is_sym_char(input.peek())) {
-            string extra;
-            input >> extra;
-            throw ReaderError("Extraneous characters after number input: ", extra);
-        } else
-            return new Int(is_neg ? -num : num);
-    } else {
-        string num_str;
-        num_str += cur;
+        if (!num_stream.eof())
+            throw ReaderError("Invalid number format: ", num_stream.str());
+
+        return rval;
+    } else if (isdigit(cur)) {
         bool is_float = false;
         while (is_sym_char(cur = input.get())) {
+            num_stream << cur;
             if (cur == '.')
                 is_float = true;
-            num_str += cur;
         }
         input.unget();
         
-        istringstream num_stream(num_str);
+        Number *rval;
         if (is_float) {
             double num;
             num_stream >> num;
-            
-            if (!num_stream.eof())
-                throw ReaderError("Extraneous characters after number input: ", num_stream.str());
-
-            return new Float(is_neg ? -num : num);
+            rval = new Float(num);
         } else {
             long num;
             num_stream >> num;
-
-            if (!num_stream.eof())
-                throw ReaderError("Extraneous characters after number input: ", num_stream.str());
-            
-            return new Int(is_neg ? -num : num);
+            rval = new Int(num);
         }
+                    
+        if (!num_stream.eof())
+            throw ReaderError("Invalid number format: ", num_stream.str());
+
+        return rval;
+    } else {
+        input.putback(cur);
+        if (sign) input.putback(sign);
+        return read_symbol(input);
     }
 }
 
@@ -118,7 +129,7 @@ Pair *read_list(istream &input) {
 Form *read_form(istream &input) {
     char cur = killws(input);
 
-    if (isdigit(cur) || cur == '-') {
+    if (isdigit(cur) || cur == '-' || cur == '+') {
         input.unget();
         return read_number(input);
     }

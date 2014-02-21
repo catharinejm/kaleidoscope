@@ -49,20 +49,27 @@ public:
 };
 
 class Number : public Form {
+protected:
+    Number() {}
+public:
+    virtual long long_val() = 0;
+    virtual double double_val() = 0;
 };
 
 class Float : public Number {
-    double v;
+    double val;
 public:
-    Float(double _v) : v(_v) {}
-    double val() { return v; }
+    Float(double d) : val(d) {}
+    virtual long long_val() { return (long)val; }
+    virtual double double_val() { return val; }
 };
 
 class Int : public Number {
-    long v;
+    long val;
 public:
-    Int(long _v) : v(_v) {}
-    long val() { return v; }
+    Int(long l) : val(l) {}
+    virtual long long_val() { return val; }
+    virtual double double_val() { return (double)val; }
 };
 
 class Symbol : public Form {
@@ -77,7 +84,7 @@ public:
 
 Form *read_form(istream &input);
 Pair *read_list(istream &input);
-Number *read_number(istream &input);
+Form *read_number(istream &input);
 Symbol *read_symbol(istream &input);
 
 string print_form(Form *form);
