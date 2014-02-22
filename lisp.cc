@@ -1,4 +1,5 @@
 #include "lisp.h"
+#include "compiler.h"
 
 #include <iostream>
 #include <limits>
@@ -18,6 +19,7 @@ string bleed_input(istream &input) {
 
 int main() {
     GC_INIT();
+    InitializeNativeTarget();
     
     for (;;) {
         try {

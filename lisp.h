@@ -142,6 +142,4 @@ string print_symbol(Symbol *s);
 
 inline Pair *cons(Form *a, Form *d) { return new /*(NoGC)*/ Pair(a, d); }
 
-static void _dbg(Form *f) { cerr << "DEBUG: " << typeid(*f).name() << endl; }
-
 #endif
