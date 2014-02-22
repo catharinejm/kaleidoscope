@@ -3,25 +3,25 @@
 #include <sstream>
 
 string print_form(Form *form) {
-    if (nilp(form))
+    if (form == NIL)
         return "()";
-    if (pairp(form))
-        return string("(") + print_list(as_pair(form)) + ")";
-    if (symbolp(form))
-        return print_symbol(as_symbol(form));
-    if (intp(form))
-        return print_int(as_int(form));
-    if (floatp(form))
-        return print_float(as_float(form));
+    if (isa<Pair>(form))
+        return string("(") + print_list(cast<Pair>(form)) + ")";
+    if (isa<Symbol>(form))
+        return print_symbol(cast<Symbol>(form));
+    if (isa<Int>(form))
+        return print_int(cast<Int>(form));
+    if (isa<Float>(form))
+        return print_float(cast<Float>(form));
 
     throw TypeError("Unknown form type", form);
 }
 
 string print_list(Pair *form) {
     string listr = print_form(form->car());
-    if (nilp(form->cdr())) return listr;
-    if (pairp(form->cdr()))
-        return listr + " " + print_list(as_pair(form->cdr()));
+    if (form->cdr() == NIL) return listr;
+    if (isa<Pair>(form->cdr()))
+        return listr + " " + print_list(cast<Pair>(form->cdr()));
 
     return listr + " . " + print_form(form->cdr());
 }
@@ -31,10 +31,10 @@ string print_symbol(Symbol *sym) {
 }
 
 string print_number(Number *n) {
-    if (intp(n))
-        return print_int(as_int(n));
-    if (floatp(n))
-        return print_float(as_float(n));
+    if (isa<Int>(n))
+        return print_int(cast<Int>(n));
+    if (isa<Float>(n))
+        return print_float(cast<Float>(n));
 
     throw TypeError("Unknown number type", n);
 }

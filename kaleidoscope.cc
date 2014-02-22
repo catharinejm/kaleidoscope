@@ -19,6 +19,7 @@
 #include <gc/gc_cpp.h>
 
 using namespace llvm;
+using namespace std;
 
 static int gettok();
 
@@ -669,16 +670,16 @@ static void MainLoop() {
     }
 }
 
-extern "C"
-double putchard(double X) {
-    putchar((char)X);
-    return 0;
-}
+extern "C" {
+    double putchard(double X) {
+        putchar((char)X);
+        return 0;
+    }
 
-extern "C"
-double printd(double X) {
-    printf("%f\n", X);
-    return 0;
+    double printd(double X) {
+        printf("%f\n", X);
+        return 0;
+    }
 }
 
 int main() {
@@ -686,8 +687,7 @@ int main() {
     LLVMContext &Context = getGlobalContext();
 
     // Prime the first token
-    fprintf(stderr, "ready> ");
-    getNextToken();
+    cerr << "wombat> ";
 
     // Make the moodule, which holds all the code
     TheModule = new (GC) Module("my cool jit", Context);

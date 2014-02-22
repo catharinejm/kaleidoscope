@@ -30,7 +30,7 @@ Form *read_number(istream &input) {
         
     if (cur == '0') {
         if (!is_sym_char(input.peek()))
-            return new Int(0);
+            return new /*(NoGC)*/ Int(0);
         
         cur = input.get();
         num_stream << cur;
@@ -39,13 +39,13 @@ Form *read_number(istream &input) {
                 
         while (is_sym_char(cur = input.get()))
             num_stream << cur;
-        input.unget();
+        input.putback(cur);
 
         Number *rval;
         if (dispatch == '.') {
             double d;
             num_stream >> d;
-            rval = new Float(d);
+            rval = new /*(NoGC)*/ Float(d);
         } else {
             long l;
 
@@ -54,7 +54,7 @@ Form *read_number(istream &input) {
             else if (isdigit(dispatch))
                 num_stream >> oct >> l;
 
-            rval = new Int(l);
+            rval = new /*(NoGC)*/ Int(l);
         }
 
         if (!num_stream.eof())
@@ -68,17 +68,17 @@ Form *read_number(istream &input) {
             if (cur == '.')
                 is_float = true;
         }
-        input.unget();
+        input.putback(cur);
         
         Number *rval;
         if (is_float) {
             double num;
             num_stream >> num;
-            rval = new Float(num);
+            rval = new /*(NoGC)*/ Float(num);
         } else {
             long num;
             num_stream >> num;
-            rval = new Int(num);
+            rval = new /*(NoGC)*/ Int(num);
         }
                     
         if (!num_stream.eof())
@@ -99,8 +99,8 @@ Symbol *read_symbol(istream &input) {
         sym += cur;
         cur = input.get();
     } 
-    input.unget();
-    return new Symbol(sym);
+    input.putback(cur);
+    return new /*(NoGC)*/ Symbol(sym);
 }
 
 Pair *read_list(istream &input) {
@@ -109,7 +109,7 @@ Pair *read_list(istream &input) {
     if (cur == ')')
         return (Pair*)NIL;
     
-    input.unget();
+    input.putback(cur);
     Form *car = read_form(input);
     cur = killws(input);
     Form *cdr;
@@ -119,31 +119,31 @@ Pair *read_list(istream &input) {
         if (cur != ')')
             throw ReaderError("only one element may succeed '.' in an irregular list");
     } else {
-        input.unget();
+        input.putback(cur);
         cdr = read_list(input);
     }
 
-    return new Pair(car, cdr);
+    return new /*(NoGC)*/ Pair(car, cdr);
 }
 
 Form *read_form(istream &input) {
     char cur = killws(input);
 
     if (isdigit(cur) || cur == '-' || cur == '+') {
-        input.unget();
+        input.putback(cur);
         return read_number(input);
     }
     if (cur == '(')
         return read_list(input);
     if (cur == '\'') {
         Form *f = read_form(input);
-        return cons(new Symbol("quote"), cons(f, NIL));
+        return cons(new /*(NoGC)*/ Symbol("quote"), cons(f, NIL));
     } if (is_sym_char(cur)) {
-        input.unget();
+        input.putback(cur);
         return read_symbol(input);
     }
 
-    input.unget();
+    input.putback(cur);
     string extra;
     input >> extra;
     throw ReaderError(string("Extraneous input: ") + extra);

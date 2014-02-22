@@ -17,12 +17,14 @@ string bleed_input(istream &input) {
 }
 
 int main() {
+    GC_INIT();
+    
     for (;;) {
         try {
             cout << "> ";
-            cin.get();
+            char c = cin.get();
             if (cin.eof()) break;
-            cin.unget();
+            cin.putback(c);
             Form *f = read_form(cin);
             string leftovers = bleed_input(cin);
             if (leftovers.find_first_not_of(" \n\t") != string::npos)
