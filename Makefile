@@ -4,8 +4,8 @@ LLVM_LINK_OPTS=$(shell llvm-config --ldflags --libs)
 LLVM_OPTS=$(LLVM_BUILD_OPTS) $(LLVM_LINK_OPTS)
 
 BDWGC_OPTS=$(shell pkg-config --libs bdw-gc) -lgccpp
-CXXFLAGS=-std=c++11 -stdlib=libc++ -I/usr/lib/c++/v1
-EXTRAS=-fcxx-exceptions -fno-rtti -lc++
+CXXFLAGS=-I/usr/lib/c++/v1
+EXTRAS=-fcxx-exceptions
 
 CC_FILES=reader.cc printer.cc compiler.cc lisp.cc
 O_FILES=reader.o printer.o compiler.o lisp.o
