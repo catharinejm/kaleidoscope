@@ -26,15 +26,18 @@ public:
 };
 
 class Compiler : public gc_cleanup {
+
     Module *_mod;
     ExecutionEngine *_exec_eng;
-    
-    // FunctionPassManager *_fpm;
+    IRBuilder<> _builder;
+        
 public:
+
     Compiler();
     ~Compiler();
-
-    shared_ptr<Function> compile(Form * f);
+    
+    Value *compile(Form *f);
+    Value *compile_number(Number *n);
 };
 
 #endif

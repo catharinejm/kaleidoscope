@@ -16,10 +16,7 @@
 #include <string>
 #include <vector>
 
-#include <gc/gc_cpp.h>
-
 using namespace llvm;
-using namespace std;
 
 static int gettok();
 
@@ -58,6 +55,7 @@ static IRBuilder<> Builder(getGlobalContext());
 static ExecutionEngine *TheExecutionEngine;
 static FunctionPassManager *TheFPM;
 static std::map<std::string, Value*> NamedValues;
+static std::map<char, int> BinopPrecedence;
 
 static int gettok() {
     static int LastChar = ' ';
@@ -110,8 +108,8 @@ static int gettok() {
     return ThisChar;
 }
 
-// base class for all expression nodes
-class ExprAST : public gc {
+// Base class for all expression nodes
+class ExprAST {
 public:
     virtual ~ExprAST() {}
     virtual Value *Codegen() = 0;
@@ -143,32 +141,32 @@ Value *VariableExprAST::Codegen() {
 }
 
 // Expression class for a binary operator
-// class BuiltinExprAST : public ExprAST {
-//     char Op;
-//     ExprAST *Args;
-// public:
-//     BuiltinExprAST(char op, ExprAST *args)
-//         : Op(op), Args(args) {}
+class BinaryExprAST : public ExprAST {
+    char Op;
+    ExprAST *LHS, *RHS;
+public:
+    BinaryExprAST(char op, ExprAST *lhs, ExprAST *rhs)
+        : Op(op), LHS(lhs), RHS(rhs) {}
 
-//     virtual Value *Codegen();
-// };
+    virtual Value *Codegen();
+};
 
-// Value *BuiltinExprAST::Codegen() {
-    // Value *L = Args->Codegen();
-    // if (!L) return 0;
+Value *BinaryExprAST::Codegen() {
+    Value *L = LHS->Codegen();
+    Value *R = RHS->Codegen();
+    if (!L || !R) return 0;
 
-    // switch (Op) {
-    // case '+': return Builder.CreateFAdd(L, R, "addtmp");
-    // case '-': return Builder.CreateFSub(L, R, "subtmp");
-    // case '*': return Builder.CreateFMul(L, R, "multmp");
-    // case '/': return Builder.CreateFDiv(L, R, "divtmp");
-    // case '<':
-    //     L = Builder.CreateFCmpULT(L, R, "cmptmp");
-    //     // Convert bool 0/1 to double 0.0 or 1.0
-    //     return Builder.CreateUIToFP(L, Type::getDoubleTy(getGlobalContext()), "booltmp");
-    // default: return ErrorV("invalid binary operator");
-    // }
-// }
+    switch (Op) {
+    case '+': return Builder.CreateFAdd(L, R, "addtmp");
+    case '-': return Builder.CreateFSub(L, R, "subtmp");
+    case '*': return Builder.CreateFMul(L, R, "multmp");
+    case '<':
+        L = Builder.CreateFCmpULT(L, R, "cmptmp");
+        // Convert bool 0/1 to double 0.0 or 1.0
+        return Builder.CreateUIToFP(L, Type::getDoubleTy(getGlobalContext()), "booltmp");
+    default: return ErrorV("invalid binary operator");
+    }
+}
 
 // Expression class for function calls
 class CallExprAST : public ExprAST {
@@ -215,7 +213,7 @@ Value *IfExprAST::Codegen() {
     Value *CondV = Cond->Codegen();
     if (!CondV) return 0;
 
-    // Convert condition to a bool by comparing equal to 0.0.
+    // Convert condition to a bool bu comparing equal to 0.0.
     CondV = Builder.CreateFCmpONE(CondV, ConstantFP::get(getGlobalContext(), APFloat(0.0)), "ifcond");
 
     Function *TheFunction = Builder.GetInsertBlock()->getParent();
@@ -430,6 +428,53 @@ Function *FunctionAST::Codegen() {
     return 0;
 }
 
+static ExprAST *ParsePrimary();
+
+static int GetTokPrecedence() {
+    if (!isascii(CurTok))
+        return -1;
+
+    int TokPrec = BinopPrecedence[CurTok];
+    if (TokPrec <= 0) return -1;
+    return TokPrec;
+}
+
+static ExprAST *ParseBinOpRHS(int ExprPrec, ExprAST *LHS) {
+    // if this is binop, find its precedence
+    for (;;) {
+        int TokPrec = GetTokPrecedence();
+
+        // if this is a binop that binds at least as tightly as the current binop,
+        // consume it, otherwise we are done
+        if (TokPrec < ExprPrec)
+            return LHS;
+
+        // Okay we now this is a binop
+        int BinOp = CurTok;
+        getNextToken(); // eat binop
+
+        ExprAST *RHS = ParsePrimary();
+        if (!RHS) return 0;
+
+        int NextPrec = GetTokPrecedence();
+        if (TokPrec < NextPrec) {
+            RHS = ParseBinOpRHS(TokPrec+1, RHS);
+            if (RHS == 0) return 0;
+        }
+        // Merge LHS/RHS
+        LHS = new BinaryExprAST(BinOp, LHS, RHS);
+    }
+}
+
+// expression
+//   ::= primary binoprhs
+static ExprAST *ParseExpression() {
+    ExprAST *LHS = ParsePrimary();
+    if (!LHS) return 0;
+
+    return ParseBinOpRHS(0, LHS);
+}
+
 // ifexpr ::= 'if' expression 'then' expression 'else' expression
 static ExprAST *ParseIfExpr() {
     getNextToken(); // eat the 'if'
@@ -553,11 +598,13 @@ static ExprAST *ParseIdentifierExpr() {
 //   ::= identifierexpr
 //   ::= numberexpr
 //   ::= parenexpr
-static ExprAST *ParseExpression() {
+static ExprAST *ParsePrimary() {
     switch (CurTok) {
     case tok_identifier: return ParseIdentifierExpr();
     case tok_number: return ParseNumberExpr();
-    case '(': return ParseListExpr();
+    case '(': return ParseParenExpr();
+    case tok_if: return ParseIfExpr();
+    case tok_for: return ParseForExpr();
     default: return Error("unknown token when expecting an expression");
     }
 }
@@ -638,7 +685,7 @@ static void HandleExtern() {
 }
 
 static void HandleTopLevelExpression() {
-    // Evaluate top-level expression into an anonymous function
+    // Evaluate top-leve expression into an anonymous function
     if (FunctionAST *F = ParseTopLevelExpr()) {
         if (Function *LF = F->Codegen()) {
             LF->dump(); // Dump the function for exposition purposes
@@ -670,27 +717,27 @@ static void MainLoop() {
     }
 }
 
-extern "C" {
-    double putchard(double X) {
-        putchar((char)X);
-        return 0;
-    }
-
-    double printd(double X) {
-        printf("%f\n", X);
-        return 0;
-    }
+extern "C"
+double putchard(double X) {
+    putchar((char)X);
+    return 0;
 }
 
 int main() {
     InitializeNativeTarget();
     LLVMContext &Context = getGlobalContext();
+    
+    BinopPrecedence['<'] = 10;
+    BinopPrecedence['+'] = 20;
+    BinopPrecedence['-'] = 20;
+    BinopPrecedence['*'] = 40;
 
     // Prime the first token
-    cerr << "wombat> ";
+    fprintf(stderr, "ready> ");
+    getNextToken();
 
     // Make the moodule, which holds all the code
-    TheModule = new (GC) Module("my cool jit", Context);
+    TheModule = new Module("my cool jit", Context);
 
     std::string ErrStr;
     TheExecutionEngine = EngineBuilder(TheModule).setErrorStr(&ErrStr).create();
@@ -703,9 +750,7 @@ int main() {
 
     // Set up the optimizer pipeline. Start with registering info about how the
     // target lays out data structures.
-    OurFPM.add(new (GC) DataLayout(*TheExecutionEngine->getDataLayout()));
-    // Promote allocas to registers
-    OurFPM.add(createPromoteMemoryToRegisterPass());
+    OurFPM.add(new DataLayout(*TheExecutionEngine->getDataLayout()));
     // Provide basic AliasAnalysis support for GVN.
     OurFPM.add(createBasicAliasAnalysisPass());
     // Do simple "peephole" optimizations and bit-twiddling optzns.

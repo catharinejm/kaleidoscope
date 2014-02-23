@@ -24,7 +24,10 @@
 //     };
 // }  // namespace llvm
 
-class PrototypeAST {
+class ExprCompiler : public gc_cleanup {
+};
+
+class PrototypeAST : public ExprCompiler {
     string Name;
     vector<string> Args;
 public:
@@ -71,14 +74,12 @@ Function *PrototypeAST::Codegen(Module *mod) {
     return F;
 }
 
-class ExprAST;
-
 // This class represents a function definition itself
-class FunctionAST {
+class FunctionAST : public ExprCompiler {
     PrototypeAST *Proto;
-    ExprAST *Body;
+    Form *Body;
 public:
-    FunctionAST(PrototypeAST *proto, ExprAST *body)
+    FunctionAST(PrototypeAST *proto, Form *body)
         : Proto(proto), Body(body) {}
 
     virtual Function *Codegen(Module *mod);
@@ -111,7 +112,7 @@ Function *FunctionAST::Codegen(Module *mod) {
 }
 
 
-Compiler::Compiler() {
+Compiler::Compiler() : _builder(getGlobalContext()) {
     _mod = new Module("wombat", getGlobalContext());
 
     string errs;
@@ -122,9 +123,21 @@ Compiler::Compiler() {
     }
 }
 
-shared_ptr<Function> Compiler::compile(Form *f) {
-    return 0;
-}    
+Value *Compiler::compile(Form *f) {
+    if (f == NIL) return 0;
+    if (isa<Number>(f)) return compile_number(cast<Number>(f));
+
+    throw CompileError("Wut?");
+}
+
+Value *Compiler::compile_number(Number *n) {
+    if (isa<Int>(n))
+        return ConstantInt::get(getGlobalContext(), APInt(64, n->long_val(), true));
+    else if (isa<Float>(n))
+        return ConstantFP::get(getGlobalContext(), APFloat(n->double_val()));
+
+    throw CompileError("Invalid number");
+}
 
 Compiler::~Compiler() {
     delete _mod;
