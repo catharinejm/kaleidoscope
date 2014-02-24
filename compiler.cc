@@ -143,28 +143,39 @@ Function *Compiler::compile_top_level(Form *f) {
 }
 
 Value *Compiler::compile(Form *f) {
-    if (isa<Pair>(f))
-        return compile_list(cast<Pair>(f));
+    if (Pair *p = dyn_cast<Pair>(f))
+        return compile_list(p);
+    if (Symbol *s = dyn_cast<Symbol>(f))
+        return compile_symbol(s);
     
     return form_ptr_val(f);
 }
 
+Value *Compiler::compile_symbol(Symbol *sym) {
+    Value *binding = _mod->getNamedValue(sym->name());
+
+    if (! binding)
+        throw CompileError("Undefined symbol: ", sym->name());
+
+    return _builder.CreateLoad(binding);
+}
+
 Value *Compiler::compile_list(Pair *lis) {
-    Form *car = lis->car();p
-    Function *fn;
+    Form *car = lis->car();
+    Value *fn = nullptr;
     if (isa<Pair>(car))
-        fn = compile_list(car);
-    else if (isa<Symbol>(car)) {
-        if (car == Symbol::intern("def"))
+        fn = compile_list(cast<Pair>(car));
+    else if (Symbol *sym = dyn_cast<Symbol>(car)) {
+        if (sym == Symbol::intern("def"))
             return compile_def(lis);
-        else if (car == Symbol::intern("quote"))
+        else if (sym == Symbol::intern("quote"))
             return compile_quote(lis);
-        fn = _mod.getNamedValue(car.name());
+        fn = compile_symbol(sym);
     }
 
-    if (! fn)
-        throw CompileError("Undefined symbol: ", car.name());
-    if (! isa<Function>(fn))
+    cerr << "COMPILE DEBUG: " << print_form(lis) << endl;
+
+    if (! (fn && isa<Function>(fn)))
         throw CompileError("Invalid function invocation.");
 
     return form_ptr_val(lis);
@@ -194,17 +205,17 @@ Value *Compiler::compile_def(Pair *lis) {
         throw CompileError("def must be a proper list");
 
     Symbol *bind_name = cast<Symbol>(bind_pair->car());
-    if (_mod->getNamedValue(bind_name->name()))
-        throw CompileError("symbol is already bound: ", bind_name->name());
-
-    Value *bind_value = compile(bind_pair->cdr());
+    Value *bind_value = compile(cast<Pair>(bind_pair->cdr())->car());
+    new GlobalVariable(*_mod,
+                       Type::getInt64Ty(getGlobalContext()),
+                       false,
+                       GlobalValue::ExternalLinkage,
+                       cast<ConstantInt>(bind_value),
+                       bind_name->name());
+    return bind_value;
 }
 
 void *Compiler::get_fn_ptr(Function *f) {
     return _exec_eng->getPointerToFunction(f);
 }
 
-Compiler::~Compiler() {
-    delete _mod;
-    delete _exec_eng;
-}

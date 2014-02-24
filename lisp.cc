@@ -22,7 +22,7 @@ int main() {
     InitializeNativeTarget();
 
     Compiler comp;
-    
+
     for (;;) {
         try {
             cout << "> ";
