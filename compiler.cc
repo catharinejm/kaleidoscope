@@ -161,16 +161,42 @@ Value *Compiler::compile_symbol(Symbol *sym) {
     return _builder.CreateLoad(binding);
 }
 
+Value *Compiler::compile_fn(Pair *lis) {
+    Pair *body = dyn_cast<Pair>(lis->cdr());
+    if (! body)
+        throw CompileError("Invalid fn definition");
+    if (! listp(lis->car()))
+        throw CompileError("Function arguments must be a list");
+
+    Pair *arglist = cast<Pair>(lis->car());
+    vector<Symbol*> argvec;
+    Symbol *a;
+
+    while(arglist) {
+        a = dyn_cast<Symbol>(arglist->car());
+        if (!a) throw CompileError("Function args must be symbols");
+        argvec.push_back(a);
+    }
+
+    FunctionType *ft = FunctionType::get(
+        Type::getInt64Ty(getGlobalContext()),
+        vector<Type*>(argvec.size(), Type::getInt64Ty(getGlobalContext())),
+        false);
+    Function *f = Function::Create(FT, Function::ExternalLinkage, "", _mod);
+}
+
 Value *Compiler::compile_list(Pair *lis) {
     Form *car = lis->car();
     Value *fn = nullptr;
     if (isa<Pair>(car))
         fn = compile_list(cast<Pair>(car));
     else if (Symbol *sym = dyn_cast<Symbol>(car)) {
-        if (sym == Symbol::intern("def"))
+        if (sym == Symbol::DEF)
             return compile_def(lis);
-        else if (sym == Symbol::intern("quote"))
+        if (sym == Symbol::QUOTE)
             return compile_quote(lis);
+        if (sym == Symbol::FN)
+            return compile_fn(lis);
         fn = compile_symbol(sym);
     }
 
@@ -210,16 +236,14 @@ Value *Compiler::compile_def(Pair *lis) {
     Symbol *bind_name = cast<Symbol>(bind_pair->car());
     Value *bind_value = compile(cast<Pair>(bind_pair->cdr())->car());
 
-    if (!isa<Constant>(bind_value))
-        throw CompileError("binding value must be a constant.");
-
     GlobalVariable *gv = _mod->getNamedGlobal(bind_name->name());
     if (! gv)
         gv = new GlobalVariable(*_mod,
                                 Type::getInt64Ty(getGlobalContext()),
                                 false,
                                 GlobalValue::ExternalLinkage,
-                                ConstantInt::get(getGlobalContext(), APInt(64, 0)), // Linkage is weird without init
+                                // value is purely external without init
+                                ConstantInt::get(getGlobalContext(), APInt(64, 0)),
                                 bind_name->name());
 
 

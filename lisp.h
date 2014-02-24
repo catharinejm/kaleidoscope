@@ -126,6 +126,10 @@ public:
     const string &name() { return n; }
 
     static bool classof(const Form *f) { return f->getKind() == FK_Symbol; }
+
+    static Symbol *const DEF;
+    static Symbol *const QUOTE;
+    static Symbol *const FN;
 };
 
 #define NIL nullptr
@@ -141,6 +145,8 @@ string print_number(Number *n);
 string print_int(Int *i);
 string print_float(Float *i);
 string print_symbol(Symbol *s);
+
+bool listp(Pair *p);
 
 // inline bool nilp(Form *f) { return f == NIL; }
 // inline bool pairp(Form *f) { return !nilp(f) && typeid(*f) == typeid(Pair); }

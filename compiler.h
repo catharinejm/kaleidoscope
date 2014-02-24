@@ -17,6 +17,8 @@
 
 #include "lisp.h"
 
+#include <map>
+
 using namespace llvm;
 using namespace std;
 
@@ -31,6 +33,8 @@ class Compiler {
     Module *_mod;
     ExecutionEngine *_exec_eng;
     IRBuilder<> _builder;
+
+    map<Symbol*,Value*> _env;
         
 public:
 
@@ -43,6 +47,7 @@ public:
     Value *compile_symbol(Symbol *sym);
     Value *compile_quote(Pair *lis);
     Value *compile_def(Pair *lis);
+    Value *compile_fn(Pair *lis);
 
     Value *form_ptr_val(Form *f);
     
