@@ -137,6 +137,7 @@ Function *Compiler::compile_top_level(Form *f) {
     Value *rval = compile(f);
     _builder.CreateRet(rval);
 
+    _mod->dump();
     verifyFunction(*F);
 
     return F;
@@ -203,16 +204,32 @@ Value *Compiler::compile_def(Pair *lis) {
         throw CompileError("def must bind to a symbol");
     if (bind_pair->cdr() && ! isa<Pair>(bind_pair->cdr()))
         throw CompileError("def must be a proper list");
+    if (cast<Pair>(bind_pair->cdr())->cdr())
+        throw CompileError("def requires exactly one binding value");
 
     Symbol *bind_name = cast<Symbol>(bind_pair->car());
     Value *bind_value = compile(cast<Pair>(bind_pair->cdr())->car());
-    new GlobalVariable(*_mod,
-                       Type::getInt64Ty(getGlobalContext()),
-                       false,
-                       GlobalValue::ExternalLinkage,
-                       cast<ConstantInt>(bind_value),
-                       bind_name->name());
+
+    if (!isa<Constant>(bind_value))
+        throw CompileError("binding value must be a constant.");
+
+    GlobalVariable *gv = _mod->getNamedGlobal(bind_name->name());
+    if (! gv)
+        gv = new GlobalVariable(*_mod,
+                                Type::getInt64Ty(getGlobalContext()),
+                                false,
+                                GlobalValue::ExternalLinkage,
+                                ConstantInt::get(getGlobalContext(), APInt(64, 0)), // Linkage is weird without init
+                                bind_name->name());
+
+
+    _builder.CreateStore(bind_value, gv);
     return bind_value;
+}
+
+Form *Compiler::eval(Form *input) {
+    Function *f = compile_top_level(input);
+    return ((Form *(*)())get_fn_ptr(f))();
 }
 
 void *Compiler::get_fn_ptr(Function *f) {

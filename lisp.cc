@@ -30,14 +30,22 @@ int main() {
             if (cin.eof()) exit(0);
             cin.putback(c);
             Form *f = read_form(cin);
+
+            // FOR DEBUGGING - Not sure if GC will keep working with compiled ptrs to the values :-/
+            GC_gcollect();
+            
             string leftovers = bleed_input(cin);
             if (leftovers.find_first_not_of(" \n\t") != string::npos)
                 throw ReaderError(string("Extraneous characters after input: ") + leftovers);
 
             Function *stmt = comp.compile_top_level(f);
-            stmt->dump();
+            //stmt->dump();
             Form *res = ((Form*(*)())comp.get_fn_ptr(stmt))();
             cout << print_form(res) << endl;
+
+            // stmt is a top-level expr, unbound, we don't need to keep it.
+            // Maybe later if we do repl history
+            stmt->eraseFromParent();
         } catch (LispException e) {
             cerr << "ERROR: " << e.what() << endl;
         }

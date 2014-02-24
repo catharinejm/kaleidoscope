@@ -47,6 +47,8 @@ public:
     Value *form_ptr_val(Form *f);
     
     void *get_fn_ptr(Function *f);
+
+    Form *eval(Form *input);
 };
 
 #endif
