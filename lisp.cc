@@ -27,7 +27,7 @@ int main() {
         try {
             cout << "> ";
             char c = cin.get();
-            if (cin.eof()) exit(0);
+            if (cin.eof()) break;
             cin.putback(c);
             Form *f = read_form(cin);
 
@@ -39,17 +39,16 @@ int main() {
                 throw ReaderError(string("Extraneous characters after input: ") + leftovers);
 
             Function *stmt = comp.compile_top_level(f);
-            //stmt->dump();
             Form *res = ((Form*(*)())comp.get_fn_ptr(stmt))();
             cout << print_form(res) << endl;
 
             // stmt is a top-level expr, unbound, we don't need to keep it.
             // Maybe later if we do repl history
-            stmt->eraseFromParent();
+            //stmt->eraseFromParent();
         } catch (LispException e) {
             cerr << "ERROR: " << e.what() << endl;
         }
     } 
-    
+    comp.dump();
     return 0;
 }

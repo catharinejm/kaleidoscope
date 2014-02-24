@@ -130,6 +130,7 @@ public:
     static Symbol *const DEF;
     static Symbol *const QUOTE;
     static Symbol *const FN;
+    static Symbol *const DO;
 };
 
 #define NIL nullptr
@@ -146,7 +147,7 @@ string print_int(Int *i);
 string print_float(Float *i);
 string print_symbol(Symbol *s);
 
-bool listp(Pair *p);
+bool listp(Form *p);
 
 // inline bool nilp(Form *f) { return f == NIL; }
 // inline bool pairp(Form *f) { return !nilp(f) && typeid(*f) == typeid(Pair); }

@@ -123,30 +123,56 @@ Compiler::Compiler() : _builder(getGlobalContext()) {
     }
 }
 
+void Compiler::push_cursor(BasicBlock *bb) {
+    cerr << "push_cursor() ";
+    if (BasicBlock *cur_bb = _builder.GetInsertBlock()) {
+        cerr << "found BB" << endl;
+        _insert_pts.push_back(pair<BasicBlock*, BasicBlock::iterator>(cur_bb, _builder.GetInsertPoint()));
+    } else
+        cerr << "no BB" << endl;
+
+    _builder.SetInsertPoint(bb);
+}
+
+void Compiler::pop_cursor() {
+    cerr << "pop_cursor() ";
+    if (! _insert_pts.empty()) {
+        cerr << "resetting cursor" << endl;
+        auto bb_pair = _insert_pts.back();
+        _builder.SetInsertPoint(bb_pair.first, bb_pair.second);
+        _insert_pts.pop_back();
+    } else
+        cerr << "Nothing to pop" << endl;
+}
+
 Value *Compiler::form_ptr_val(Form *f) {
     return ConstantInt::get(getGlobalContext(), APInt(64, (intptr_t)f));
 }
 
 Function *Compiler::compile_top_level(Form *f) {
-    FunctionType *FT = FunctionType::get(IntegerType::get(getGlobalContext(), 64), vector<Type*>(), false);
-    Function *F = Function::Create(FT, Function::ExternalLinkage, "", _mod);
 
-    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry", F);
+    cerr << "In compile_top_level()" << endl;
+
+    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry");
     _builder.SetInsertPoint(bb);
-
     Value *rval = compile(f);
+
+    FunctionType *FT = FunctionType::get(rval->getType(), vector<Type*>(), false);
+    Function *F = Function::Create(FT, Function::ExternalLinkage, "top", _mod);
+    F->getBasicBlockList().insert(F->begin(), bb);
+    
     _builder.CreateRet(rval);
 
-    _mod->dump();
+    // _mod->dump();
     verifyFunction(*F);
 
     return F;
 }
 
 Value *Compiler::compile(Form *f) {
-    if (Pair *p = dyn_cast<Pair>(f))
+    if (Pair *p = dyn_cast_or_null<Pair>(f))
         return compile_list(p);
-    if (Symbol *s = dyn_cast<Symbol>(f))
+    if (Symbol *s = dyn_cast_or_null<Symbol>(f))
         return compile_symbol(s);
     
     return form_ptr_val(f);
@@ -162,27 +188,63 @@ Value *Compiler::compile_symbol(Symbol *sym) {
 }
 
 Value *Compiler::compile_fn(Pair *lis) {
-    Pair *body = dyn_cast<Pair>(lis->cdr());
+    cerr << "In compile_fn()" << endl;
+    
+    Pair *body = dyn_cast_or_null<Pair>(lis->cdr());
     if (! body)
         throw CompileError("Invalid fn definition");
-    if (! listp(lis->car()))
+    if (! listp(body->car()))
         throw CompileError("Function arguments must be a list");
+    if (! listp(body->cdr()))
+        throw CompileError("Function definition must be a proper list");
 
-    Pair *arglist = cast<Pair>(lis->car());
+    Pair *arglist = cast_or_null<Pair>(body->car());
     vector<Symbol*> argvec;
     Symbol *a;
 
     while(arglist) {
-        a = dyn_cast<Symbol>(arglist->car());
+        a = dyn_cast_or_null<Symbol>(arglist->car());
         if (!a) throw CompileError("Function args must be symbols");
         argvec.push_back(a);
+        arglist = dyn_cast_or_null<Pair>(arglist->cdr());
     }
 
     FunctionType *ft = FunctionType::get(
         Type::getInt64Ty(getGlobalContext()),
         vector<Type*>(argvec.size(), Type::getInt64Ty(getGlobalContext())),
         false);
-    Function *f = Function::Create(FT, Function::ExternalLinkage, "", _mod);
+    Function *f = Function::Create(ft, Function::ExternalLinkage, "fn", _mod);
+
+    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry", f);
+
+    push_cursor(bb);
+
+    Pair * body_forms = cast_or_null<Pair>(body->cdr());
+    Value *ret = compile_do(cons(Symbol::DO, body_forms));
+
+    // TODO: Create arg allocas
+
+    _builder.CreateRet(ret);
+
+    verifyFunction(*f);
+    // TODO: Optimization passes
+
+    pop_cursor();
+
+    return f;
+}
+
+Value *Compiler::compile_do(Pair *lis) {
+    if (! listp(lis))
+        throw CompileError("'do' form must be a proper list");
+
+    Pair *forms = cast_or_null<Pair>(lis->cdr());
+    Value *rval = form_ptr_val(NIL);
+    while (forms) {
+        rval = compile(forms->car());
+        forms = cast_or_null<Pair>(forms->cdr());
+    }
+    return rval;
 }
 
 Value *Compiler::compile_list(Pair *lis) {
@@ -197,6 +259,8 @@ Value *Compiler::compile_list(Pair *lis) {
             return compile_quote(lis);
         if (sym == Symbol::FN)
             return compile_fn(lis);
+        if (sym == Symbol::DO)
+            return compile_do(lis);
         fn = compile_symbol(sym);
     }
 
@@ -205,7 +269,7 @@ Value *Compiler::compile_list(Pair *lis) {
     if (! (fn && isa<Function>(fn)))
         throw CompileError("Invalid function invocation.");
 
-    return form_ptr_val(lis);
+    return _builder.CreateCall(fn, fn->getName());
 }
 
 Value *Compiler::compile_quote(Pair *lis) {

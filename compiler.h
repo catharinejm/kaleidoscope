@@ -35,6 +35,8 @@ class Compiler {
     IRBuilder<> _builder;
 
     map<Symbol*,Value*> _env;
+    vector<pair<BasicBlock*, BasicBlock::iterator> > _insert_pts;
+    
         
 public:
 
@@ -42,10 +44,16 @@ public:
     
     Function *compile_top_level(Form *f);
 
+    void push_cursor(BasicBlock *bb);
+    void pop_cursor();
+
+    void dump() { _mod->dump(); }
+
     Value *compile(Form *f);
     Value *compile_list(Pair *lis);
     Value *compile_symbol(Symbol *sym);
     Value *compile_quote(Pair *lis);
+    Value *compile_do(Pair *lis);
     Value *compile_def(Pair *lis);
     Value *compile_fn(Pair *lis);
 
