@@ -100,7 +100,7 @@ Symbol *read_symbol(istream &input) {
         cur = input.get();
     } 
     input.putback(cur);
-    return new /*(NoGC)*/ Symbol(sym);
+    return Symbol::intern(sym);
 }
 
 Pair *read_list(istream &input) {
@@ -137,7 +137,7 @@ Form *read_form(istream &input) {
         return read_list(input);
     if (cur == '\'') {
         Form *f = read_form(input);
-        return cons(new /*(NoGC)*/ Symbol("quote"), cons(f, NIL));
+        return cons(Symbol::intern("quote"), cons(f, NIL));
     } if (is_sym_char(cur)) {
         input.putback(cur);
         return read_symbol(input);

@@ -123,20 +123,85 @@ Compiler::Compiler() : _builder(getGlobalContext()) {
     }
 }
 
-Value *Compiler::compile(Form *f) {
-    if (f == NIL) return 0;
-    if (isa<Number>(f)) return compile_number(cast<Number>(f));
-
-    throw CompileError("Wut?");
+Value *Compiler::form_ptr_val(Form *f) {
+    return ConstantInt::get(getGlobalContext(), APInt(64, (intptr_t)f));
 }
 
-Value *Compiler::compile_number(Number *n) {
-    if (isa<Int>(n))
-        return ConstantInt::get(getGlobalContext(), APInt(64, n->long_val(), true));
-    else if (isa<Float>(n))
-        return ConstantFP::get(getGlobalContext(), APFloat(n->double_val()));
+Function *Compiler::compile_top_level(Form *f) {
+    FunctionType *FT = FunctionType::get(IntegerType::get(getGlobalContext(), 64), vector<Type*>(), false);
+    Function *F = Function::Create(FT, Function::ExternalLinkage, "", _mod);
 
-    throw CompileError("Invalid number");
+    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry", F);
+    _builder.SetInsertPoint(bb);
+
+    Value *rval = compile(f);
+    _builder.CreateRet(rval);
+
+    verifyFunction(*F);
+
+    return F;
+}
+
+Value *Compiler::compile(Form *f) {
+    if (isa<Pair>(f))
+        return compile_list(cast<Pair>(f));
+    
+    return form_ptr_val(f);
+}
+
+Value *Compiler::compile_list(Pair *lis) {
+    Form *car = lis->car();p
+    Function *fn;
+    if (isa<Pair>(car))
+        fn = compile_list(car);
+    else if (isa<Symbol>(car)) {
+        if (car == Symbol::intern("def"))
+            return compile_def(lis);
+        else if (car == Symbol::intern("quote"))
+            return compile_quote(lis);
+        fn = _mod.getNamedValue(car.name());
+    }
+
+    if (! fn)
+        throw CompileError("Undefined symbol: ", car.name());
+    if (! isa<Function>(fn))
+        throw CompileError("Invalid function invocation.");
+
+    return form_ptr_val(lis);
+}
+
+Value *Compiler::compile_quote(Pair *lis) {
+    if (!lis->cdr())
+        throw CompileError("Quote takes exactly one argument");
+    if (! isa<Pair>(lis->cdr()))
+        throw CompileError("Quote must be a proper list");
+    Pair *quoted_form = cast<Pair>(lis->cdr());
+    if (quoted_form->cdr())
+        throw CompileError("Quote takes exactly one argument");
+
+    return form_ptr_val(quoted_form->car());
+}
+
+Value *Compiler::compile_def(Pair *lis) {
+    if (! lis->cdr())
+        throw CompileError("def requires an argument");
+    if (! isa<Pair>(lis->cdr()))
+        throw CompileError("def must be a proper list");
+    Pair *bind_pair = cast<Pair>(lis->cdr());
+    if (! isa<Symbol>(bind_pair->car()))
+        throw CompileError("def must bind to a symbol");
+    if (bind_pair->cdr() && ! isa<Pair>(bind_pair->cdr()))
+        throw CompileError("def must be a proper list");
+
+    Symbol *bind_name = cast<Symbol>(bind_pair->car());
+    if (_mod->getNamedValue(bind_name->name()))
+        throw CompileError("symbol is already bound: ", bind_name->name());
+
+    Value *bind_value = compile(bind_pair->cdr());
+}
+
+void *Compiler::get_fn_ptr(Function *f) {
+    return _exec_eng->getPointerToFunction(f);
 }
 
 Compiler::~Compiler() {

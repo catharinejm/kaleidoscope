@@ -6,6 +6,7 @@
 
 #include <iostream>
 #include <exception>
+#include <unordered_map>
 
 #include <gc/gc_cpp.h>
 
@@ -106,15 +107,28 @@ public:
 
 class Symbol : public Form {
     string n;
-public:
+protected:    
     Symbol(string &_n) : Form(FK_Symbol), n(_n) {}
     Symbol(const char *_n) : Form(FK_Symbol), n(_n) {}
+
+public:
+    static Symbol *intern(string name) {
+        static unordered_map<string, Symbol*> _syms;
+        auto s_iter = _syms.find(name);
+        if (s_iter == _syms.end()) {
+            auto res_pair = _syms.insert(pair<string, Symbol*>(name, new Symbol(name)));
+            if (res_pair.second)
+                return res_pair.first->second;
+            throw LispException("Failed to intern symbol.");
+        }
+        return s_iter->second;
+    }
     const string &name() { return n; }
 
     static bool classof(const Form *f) { return f->getKind() == FK_Symbol; }
 };
 
-#define NIL (Form*)0
+#define NIL nullptr
 
 Form *read_form(istream &input);
 Pair *read_list(istream &input);

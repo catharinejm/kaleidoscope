@@ -20,18 +20,24 @@ string bleed_input(istream &input) {
 int main() {
     GC_INIT();
     InitializeNativeTarget();
+
+    Compiler comp;
     
     for (;;) {
         try {
             cout << "> ";
             char c = cin.get();
-            if (cin.eof()) break;
+            if (cin.eof()) exit(0);
             cin.putback(c);
             Form *f = read_form(cin);
             string leftovers = bleed_input(cin);
             if (leftovers.find_first_not_of(" \n\t") != string::npos)
                 throw ReaderError(string("Extraneous characters after input: ") + leftovers);
-            cout << print_form(f) << endl;
+
+            Function *stmt = comp.compile_top_level(f);
+            stmt->dump();
+            Form *res = ((Form*(*)())comp.get_fn_ptr(stmt))();
+            cout << print_form(res) << endl;
         } catch (LispException e) {
             cerr << "ERROR: " << e.what() << endl;
         }

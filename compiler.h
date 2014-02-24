@@ -23,6 +23,7 @@ using namespace std;
 class CompileError : public LispException {
 public:
     CompileError(string m) : LispException(m) {}
+    CompileError(String m, string n) : LispException(m + n) {}
 };
 
 class Compiler : public gc_cleanup {
@@ -36,8 +37,16 @@ public:
     Compiler();
     ~Compiler();
     
+    Function *compile_top_level(Form *f);
+
     Value *compile(Form *f);
-    Value *compile_number(Number *n);
+    Value *compile_list(Pair *lis);
+    Value *compile_quote(Pair *lis);
+    Value *compile_def(Pair *lis);
+
+    Value *form_ptr_val(Form *f);
+    
+    void *get_fn_ptr(Function *f);
 };
 
 #endif
