@@ -7,6 +7,7 @@
 #include <iostream>
 #include <exception>
 #include <unordered_map>
+#include <vector>
 
 #include <gc/gc_cpp.h>
 
@@ -63,14 +64,16 @@ protected:
 };
 
 class Pair : public Form {
-    Form *a, *d;
+    Form *_a, *_d;
 public:
-    Pair(Form *_a, Form *_d) : Form(FK_Pair), a(_a), d(_d) {}
+    Pair(Form *a, Form *d) : Form(FK_Pair), _a(a), _d(d) {}
 
     static bool classof(const Form *f) { return f->getKind() == FK_Pair; }
 
-    Form *car() { return a; }
-    Form *cdr() { return d; }
+    Form *car() { return _a; }
+    Form *cdr() { return _d; }
+    void setcar(Form *a) { _a = a; }
+    void setcdr(Form *d) { _d = d; }
 };
 
 class Number : public Form {
@@ -149,6 +152,16 @@ string print_symbol(Symbol *s);
 
 bool listp(Form *p);
 
+inline Pair *cons(Form *a, Form *d) { return new /*(NoGC)*/ Pair(a, d); }
+
+inline Form *list1(Form *elem) { return cons(elem, NIL); }
+inline Form *list2(Form *e1, Form *e2) { return cons(e1, cons(e2, NIL)); }
+inline Form *list3(Form *e1, Form *e2, Form *e3) { return cons(e1, cons(e2, cons(e3, NIL))); }
+inline Form *list4(Form *e1, Form *e2, Form *e3, Form *e4) { return cons(e1, cons(e2, cons(e3, cons(e4, NIL)))); }
+inline Form *list5(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5) { return cons(e1, cons(e2, cons(e3, cons(e4, cons(e5, NIL))))); }
+
+Form *listn(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5, vector<Form*> &rest);
+
 // inline bool nilp(Form *f) { return f == NIL; }
 // inline bool pairp(Form *f) { return !nilp(f) && typeid(*f) == typeid(Pair); }
 // inline bool symbolp(Form *f) { return !nilp(f) && typeid(*f) == typeid(Symbol); }
@@ -160,7 +173,5 @@ bool listp(Form *p);
 // inline Symbol *as_symbol(Form *f) { return static_cast<Symbol*>(f); }
 // inline Int *as_int(Form *f) { return static_cast<Int*>(f); }
 // inline Float *as_float(Form *f) { return static_cast<Float*>(f); }
-
-inline Pair *cons(Form *a, Form *d) { return new /*(NoGC)*/ Pair(a, d); }
 
 #endif

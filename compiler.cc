@@ -43,20 +43,7 @@ Function *Compiler::compile_top_level(Form *f) {
 
     cerr << "In compile_top_level()" << endl;
 
-    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry");
-    _builder.SetInsertPoint(bb);
-    Value *rval = compile(f);
-
-    FunctionType *FT = FunctionType::get(rval->getType(), vector<Type*>(), false);
-    Function *F = Function::Create(FT, Function::ExternalLinkage, "top", _mod);
-    F->getBasicBlockList().insert(F->begin(), bb);
-    
-    _builder.CreateRet(rval);
-
-    // _mod->dump();
-    verifyFunction(*F);
-
-    return F;
+    return cast<Function>(compile(list3(Symbol::FN, NIL, f)));
 }
 
 Value *Compiler::compile(Form *f) {
@@ -83,6 +70,15 @@ Value *Compiler::compile_fn(Pair *lis) {
     Pair *body = dyn_cast_or_null<Pair>(lis->cdr());
     if (! body)
         throw CompileError("Invalid fn definition");
+
+    Symbol *name = dyn_cast_or_null<Symbol>(body->car());
+    if (name)
+        body = dyn_cast_or_null<Pair>(body->cdr());
+    else
+        name = Symbol::intern("anon");
+        
+    if (! body)
+        throw CompileError("Invalid fn definition");
     if (! listp(body->car()))
         throw CompileError("Function arguments must be a list");
     if (! listp(body->cdr()))
@@ -99,18 +95,19 @@ Value *Compiler::compile_fn(Pair *lis) {
         arglist = dyn_cast_or_null<Pair>(arglist->cdr());
     }
 
-    FunctionType *ft = FunctionType::get(
-        Type::getInt64Ty(getGlobalContext()),
-        vector<Type*>(argvec.size(), Type::getInt64Ty(getGlobalContext())),
-        false);
-    Function *f = Function::Create(ft, Function::ExternalLinkage, "fn", _mod);
-
-    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry", f);
-
+    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry");
     push_cursor(bb);
 
     Pair * body_forms = cast_or_null<Pair>(body->cdr());
     Value *ret = compile_do(cons(Symbol::DO, body_forms));
+
+    FunctionType *ft = FunctionType::get(
+        ret->getType(),
+        vector<Type*>(argvec.size(), Type::getInt64Ty(getGlobalContext())),
+        false);
+    
+    Function *f = Function::Create(ft, Function::ExternalLinkage, name->name(), _mod);
+    f->getBasicBlockList().insert(f->begin(), bb);
 
     // TODO: Create arg allocas
 
@@ -156,8 +153,9 @@ Value *Compiler::compile_list(Pair *lis) {
 
     cerr << "COMPILE DEBUG: " << print_form(lis) << endl;
 
-    if (! (fn && isa<Function>(fn)))
-        throw CompileError("Invalid function invocation.");
+    PointerType *fn_type = dyn_cast<PointerType>(fn->getType());
+    if (! (fn_type && fn_type->getElementType()->isFunctionTy()))
+        throw CompileError("Invalid function invocation");
 
     return _builder.CreateCall(fn, fn->getName());
 }
@@ -190,14 +188,15 @@ Value *Compiler::compile_def(Pair *lis) {
     Symbol *bind_name = cast<Symbol>(bind_pair->car());
     Value *bind_value = compile(cast<Pair>(bind_pair->cdr())->car());
 
-    GlobalVariable *gv = _mod->getNamedGlobal(bind_name->name());
-    if (! gv)
+    Constant *gv = _mod->getNamedValue(bind_name->name());
+
+    if (!gv)
         gv = new GlobalVariable(*_mod,
-                                Type::getInt64Ty(getGlobalContext()),
+                                bind_value->getType(),
                                 false,
                                 GlobalValue::ExternalLinkage,
                                 // value is purely external without init
-                                ConstantInt::get(getGlobalContext(), APInt(64, 0)),
+                                Constant::getNullValue(bind_value->getType()),
                                 bind_name->name());
 
 

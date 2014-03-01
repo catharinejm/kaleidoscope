@@ -1,49 +1,38 @@
-#include <iostream>
-#include <memory>
-#include <string>
-#include <sstream>
+// #include <iostream>
+// #include <memory>
+// #include <string>
+// #include <sstream>
 
 
 //#include <gc/gc_cpp.h>
 
-using namespace std;
+// using namespace std;
 
-struct A {
-    string name;
-    A() : name("bobo") {}// cerr << "A ctor" << endl; }
-    ~A() {}// cerr << "~A dtor" << endl; }
+class A {
+protected:
+    int x;
+public:
+    A(int i): x(i) {}
+    virtual int add(int y) { return x + y; }
 };
 
-struct B {
-    shared_ptr<A> _a;
-    B() : _a(new A) {}// cerr << "B ctor" << endl; }
-    ~B() {}// cerr << "~B dtor" << endl; }
+class B : public A {
+public:
+    B(int i) : A(i) {}
+    virtual int add(int y) { return x + y; }
 };
 
-struct C {
-    shared_ptr<B> _b;
-    C() : _b(new B) {}// cerr << "C ctor" << endl; }
-    ~C() {}// cerr << "~C dtor" << endl; }
-};
-
-shared_ptr<C> get_shared() { return shared_ptr<C>(new C); }
+// int func(A &a) {
+//     return a.add(40);
+// }
 
 int main(int argc, char *argv[]) {
-    // GC_INIT();
+    //GC_INIT()
 
-    if (argc < 2){
-        cerr << "Usage: " << argv[0] << " <iterations>" << endl;
-        exit(1);
-    }
-    stringstream s;
-    s << argv[1];
-    long iters;
-    s >> iters;
+    B b(10);
+    A a(10);
 
-    for (int x = 0; x < iters; x++) {
-        shared_ptr<C> c = get_shared();
-        c.reset();
-    }
+    b.add(10);
 
     return 0;
 }
