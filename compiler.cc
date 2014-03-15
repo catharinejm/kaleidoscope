@@ -14,25 +14,18 @@ Compiler::Compiler() : _builder(getGlobalContext()) {
 }
 
 void Compiler::push_cursor(BasicBlock *bb) {
-    cerr << "push_cursor() ";
-    if (BasicBlock *cur_bb = _builder.GetInsertBlock()) {
-        cerr << "found BB" << endl;
+    if (BasicBlock *cur_bb = _builder.GetInsertBlock())
         _insert_pts.push_back(pair<BasicBlock*, BasicBlock::iterator>(cur_bb, _builder.GetInsertPoint()));
-    } else
-        cerr << "no BB" << endl;
 
     _builder.SetInsertPoint(bb);
 }
 
 void Compiler::pop_cursor() {
-    cerr << "pop_cursor() ";
     if (! _insert_pts.empty()) {
-        cerr << "resetting cursor" << endl;
         auto bb_pair = _insert_pts.back();
         _builder.SetInsertPoint(bb_pair.first, bb_pair.second);
         _insert_pts.pop_back();
-    } else
-        cerr << "Nothing to pop" << endl;
+    }
 }
 
 Value *Compiler::form_ptr_val(Form *f) {
@@ -40,10 +33,23 @@ Value *Compiler::form_ptr_val(Form *f) {
 }
 
 Function *Compiler::compile_top_level(Form *f) {
-
-    cerr << "In compile_top_level()" << endl;
-
     return cast<Function>(compile(list3(Symbol::FN, NIL, f)));
+}
+
+Value *Compiler::resolve_local(Symbol *sym) {
+    for (auto rit = _env.rbegin(); rit != _env.rend(); ++rit) {
+        auto map_iter = rit->find(sym);
+        if (map_iter != rit->end())
+            return map_iter->second;
+    }
+    return nullptr;
+}
+
+void Compiler::push_local_env(map<Symbol*,Value*> env) {
+    _env.push_back(env);
+}
+void Compiler::pop_local_env() {
+    if (! _env.empty()) _env.pop_back();
 }
 
 Value *Compiler::compile(Form *f) {
@@ -56,7 +62,7 @@ Value *Compiler::compile(Form *f) {
 }
 
 Value *Compiler::compile_symbol(Symbol *sym) {
-    Value *binding = _mod->getNamedValue(sym->name());
+    Value *binding = resolve_local(sym) || _mod->getNamedValue(sym->name());
 
     if (! binding)
         throw CompileError("Undefined symbol: ", sym->name());
@@ -151,19 +157,29 @@ Value *Compiler::compile_list(Pair *lis) {
         fn = compile_symbol(sym);
     }
 
-    cerr << "COMPILE DEBUG: " << print_form(lis) << endl;
+    // cerr << "COMPILE DEBUG: " << print_form(lis) << endl;
 
     PointerType *fn_type = dyn_cast<PointerType>(fn->getType());
     if (! (fn_type && fn_type->getElementType()->isFunctionTy()))
         throw CompileError("Invalid function invocation");
 
-    return _builder.CreateCall(fn, fn->getName());
+    if (! listp(lis))
+        throw CompileError("Function call args must be a proper list.");
+
+    Pair *args = cast_or_null<Pair>(lis->cdr());
+    std::vector<Value*> argvec;
+    while (args) {
+        argvec.push_back(compile(args->car()));
+        args = cast_or_null<Pair>(args->cdr());
+    }
+    
+    return _builder.CreateCall(fn, argvec, fn->getName());
 }
 
 Value *Compiler::compile_quote(Pair *lis) {
-    if (!lis->cdr())
+    if (! lis->cdr())
         throw CompileError("Quote takes exactly one argument");
-    if (! isa<Pair>(lis->cdr()))
+    if (! listp(lis))
         throw CompileError("Quote must be a proper list");
     Pair *quoted_form = cast<Pair>(lis->cdr());
     if (quoted_form->cdr())
@@ -180,13 +196,22 @@ Value *Compiler::compile_def(Pair *lis) {
     Pair *bind_pair = cast<Pair>(lis->cdr());
     if (! isa<Symbol>(bind_pair->car()))
         throw CompileError("def must bind to a symbol");
-    if (bind_pair->cdr() && ! isa<Pair>(bind_pair->cdr()))
+    if (! listp(bind_pair->cdr()))
         throw CompileError("def must be a proper list");
-    if (cast<Pair>(bind_pair->cdr())->cdr())
-        throw CompileError("def requires exactly one binding value");
 
     Symbol *bind_name = cast<Symbol>(bind_pair->car());
-    Value *bind_value = compile(cast<Pair>(bind_pair->cdr())->car());
+
+    Value *bind_value;
+    Pair *val_form = cast_or_null<Pair>(bind_pair->cdr());
+    if (val_form) {
+        if (val_form->cdr())
+            throw CompileError("def takes at most one value");
+        bind_value = compile(val_form->car());
+    } else
+        bind_value = form_ptr_val(NIL);
+        
+    if (cast<Pair>(bind_pair->cdr())->cdr())
+        throw CompileError("def requires exactly one binding value");
 
     Constant *gv = _mod->getNamedValue(bind_name->name());
 

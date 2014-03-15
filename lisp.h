@@ -49,8 +49,6 @@ public:
         FK_Float,
         FK_Int,
         FK_NumberEnd,
-
-        FK_Long,
     };
     
     virtual ~Form() {};
@@ -150,17 +148,19 @@ string print_int(Int *i);
 string print_float(Float *i);
 string print_symbol(Symbol *s);
 
-bool listp(Form *p);
+extern "C" {
+    bool listp(Form *p);
 
-inline Pair *cons(Form *a, Form *d) { return new /*(NoGC)*/ Pair(a, d); }
+    inline Pair *cons(Form *a, Form *d) { return new Pair(a, d); }
 
-inline Form *list1(Form *elem) { return cons(elem, NIL); }
-inline Form *list2(Form *e1, Form *e2) { return cons(e1, cons(e2, NIL)); }
-inline Form *list3(Form *e1, Form *e2, Form *e3) { return cons(e1, cons(e2, cons(e3, NIL))); }
-inline Form *list4(Form *e1, Form *e2, Form *e3, Form *e4) { return cons(e1, cons(e2, cons(e3, cons(e4, NIL)))); }
-inline Form *list5(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5) { return cons(e1, cons(e2, cons(e3, cons(e4, cons(e5, NIL))))); }
+    inline Form *list1(Form *elem) { return cons(elem, NIL); }
+    inline Form *list2(Form *e1, Form *e2) { return cons(e1, cons(e2, NIL)); }
+    inline Form *list3(Form *e1, Form *e2, Form *e3) { return cons(e1, cons(e2, cons(e3, NIL))); }
+    inline Form *list4(Form *e1, Form *e2, Form *e3, Form *e4) { return cons(e1, cons(e2, cons(e3, cons(e4, NIL)))); }
+    inline Form *list5(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5) { return cons(e1, cons(e2, cons(e3, cons(e4, cons(e5, NIL))))); }
 
-Form *listn(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5, vector<Form*> &rest);
+    Form *listn(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5, vector<Form*> &rest);
+}
 
 // inline bool nilp(Form *f) { return f == NIL; }
 // inline bool pairp(Form *f) { return !nilp(f) && typeid(*f) == typeid(Pair); }

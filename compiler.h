@@ -34,14 +34,13 @@ class Compiler {
     ExecutionEngine *_exec_eng;
     IRBuilder<> _builder;
 
-    map<Symbol*,Value*> _env;
+    vector<map<Symbol*,Value*> > _env;
     vector<pair<BasicBlock*, BasicBlock::iterator> > _insert_pts;
     
-        
 public:
 
     Compiler();
-    
+
     Function *compile_top_level(Form *f);
 
     void push_cursor(BasicBlock *bb);
@@ -49,6 +48,11 @@ public:
 
     void dump() { _mod->dump(); }
 
+    Value *resolve_local(Symbol *sym);
+
+    void push_local_env(map<Symbol*,Value*> env);
+    void pop_local_env();
+    
     Value *compile(Form *f);
     Value *compile_list(Pair *lis);
     Value *compile_symbol(Symbol *sym);
