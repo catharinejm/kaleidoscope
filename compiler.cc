@@ -62,7 +62,9 @@ Value *Compiler::compile(Form *f) {
 }
 
 Value *Compiler::compile_symbol(Symbol *sym) {
-    Value *binding = resolve_local(sym) || _mod->getNamedValue(sym->name());
+    Value *binding = resolve_local(sym);
+    if (! binding)
+        binding = _mod->getNamedValue(sym->name());
 
     if (! binding)
         throw CompileError("Undefined symbol: ", sym->name());
@@ -71,7 +73,8 @@ Value *Compiler::compile_symbol(Symbol *sym) {
 }
 
 Value *Compiler::compile_fn(Pair *lis) {
-    cerr << "In compile_fn()" << endl;
+    static int n = -1;
+    cerr << "In compile_fn() - " << ++n << endl;
     
     Pair *body = dyn_cast_or_null<Pair>(lis->cdr());
     if (! body)
@@ -101,29 +104,43 @@ Value *Compiler::compile_fn(Pair *lis) {
         arglist = dyn_cast_or_null<Pair>(arglist->cdr());
     }
 
-    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry");
-    push_cursor(bb);
-
-    Pair * body_forms = cast_or_null<Pair>(body->cdr());
-    Value *ret = compile_do(cons(Symbol::DO, body_forms));
-
     FunctionType *ft = FunctionType::get(
-        ret->getType(),
+        Type::getInt64Ty(getGlobalContext()),
         vector<Type*>(argvec.size(), Type::getInt64Ty(getGlobalContext())),
         false);
     
     Function *f = Function::Create(ft, Function::ExternalLinkage, name->name(), _mod);
-    f->getBasicBlockList().insert(f->begin(), bb);
 
-    // TODO: Create arg allocas
+    BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry", f);
+    push_cursor(bb);
 
+    Pair * body_forms = cast_or_null<Pair>(body->cdr());
+
+    map<Symbol*, Value*> locals;
+    auto ai = argvec.begin();
+    for (auto func_ai = f->arg_begin();
+         func_ai != f->arg_end() && ai != argvec.end();
+         ++func_ai, ++ai)
+    {
+        func_ai->setName((*ai)->name());
+        locals.insert(pair<Symbol*, Value*>(*ai, func_ai));
+    }
+    push_local_env(locals);
+
+    Value *ret = compile_do(cons(Symbol::DO, body_forms));
     _builder.CreateRet(ret);
+
+    cerr << "****** " << n << ": ";
+    ret->getType()->dump();
+    cerr << endl;
 
     verifyFunction(*f);
     // TODO: Optimization passes
 
+    pop_local_env();
     pop_cursor();
 
+    --n;
     return f;
 }
 
@@ -142,10 +159,10 @@ Value *Compiler::compile_do(Pair *lis) {
 
 Value *Compiler::compile_list(Pair *lis) {
     Form *car = lis->car();
-    Value *fn = nullptr;
-    if (isa<Pair>(car))
-        fn = compile_list(cast<Pair>(car));
-    else if (Symbol *sym = dyn_cast<Symbol>(car)) {
+    Function *fn = nullptr;
+    if (Pair *p  = dyn_cast_or_null<Pair>(car))
+        fn = dyn_cast_or_null<Function>(compile_list(p));
+    if (Symbol *sym = dyn_cast_or_null<Symbol>(car)) {
         if (sym == Symbol::DEF)
             return compile_def(lis);
         if (sym == Symbol::QUOTE)
@@ -154,17 +171,16 @@ Value *Compiler::compile_list(Pair *lis) {
             return compile_fn(lis);
         if (sym == Symbol::DO)
             return compile_do(lis);
-        fn = compile_symbol(sym);
+        fn = dyn_cast_or_null<Function>(compile_symbol(sym));
     }
 
     // cerr << "COMPILE DEBUG: " << print_form(lis) << endl;
 
-    PointerType *fn_type = dyn_cast<PointerType>(fn->getType());
-    if (! (fn_type && fn_type->getElementType()->isFunctionTy()))
+    if (! fn)
         throw CompileError("Invalid function invocation");
 
     if (! listp(lis))
-        throw CompileError("Function call args must be a proper list.");
+        throw CompileError("Function call must be a proper list.");
 
     Pair *args = cast_or_null<Pair>(lis->cdr());
     std::vector<Value*> argvec;
