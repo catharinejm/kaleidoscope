@@ -30,7 +30,7 @@ Form *read_number(istream &input) {
         
     if (cur == '0') {
         if (!is_sym_char(input.peek()))
-            return new /*(NoGC)*/ Int(0);
+            return new Int(0);
         
         cur = input.get();
         num_stream << cur;
@@ -45,7 +45,7 @@ Form *read_number(istream &input) {
         if (dispatch == '.') {
             double d;
             num_stream >> d;
-            rval = new /*(NoGC)*/ Float(d);
+            rval = new Float(d);
         } else {
             long l;
 
@@ -54,7 +54,7 @@ Form *read_number(istream &input) {
             else if (isdigit(dispatch))
                 num_stream >> oct >> l;
 
-            rval = new /*(NoGC)*/ Int(l);
+            rval = new Int(l);
         }
 
         if (!num_stream.eof())
@@ -74,11 +74,11 @@ Form *read_number(istream &input) {
         if (is_float) {
             double num;
             num_stream >> num;
-            rval = new /*(NoGC)*/ Float(num);
+            rval = new Float(num);
         } else {
             long num;
             num_stream >> num;
-            rval = new /*(NoGC)*/ Int(num);
+            rval = new Int(num);
         }
                     
         if (!num_stream.eof())
@@ -123,7 +123,7 @@ Pair *read_list(istream &input) {
         cdr = read_list(input);
     }
 
-    return new /*(NoGC)*/ Pair(car, cdr);
+    return new Pair(car, cdr);
 }
 
 Form *read_form(istream &input) {

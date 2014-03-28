@@ -3,6 +3,7 @@
 #define _WOMBAT_READER_H
 
 #include "llvm/Support/Casting.h"
+#include "llvm/IR/Function.h"
 
 #include <iostream>
 #include <exception>
@@ -49,6 +50,8 @@ public:
         FK_Float,
         FK_Int,
         FK_NumberEnd,
+
+        FK_Fn,
     };
     
     virtual ~Form() {};
@@ -134,6 +137,19 @@ public:
     static Symbol *const DO;
 };
 
+class Fn : public Form {
+    Pair *_src;
+    Function *_fn;
+public:
+    Fn(Pair *s, Function *f) : Form(FK_Fn), _src(s), _fn(f) {}
+
+    static bool classof(const Form *f) { return f->getKind() == FK_Fn; }
+    static bool classof(const Value *v) { return Function::classof(v); }
+
+    Pair *src() { return _src; }
+    Function *fn() { return _fn; }
+};
+
 #define NIL nullptr
 
 Form *read_form(istream &input);
@@ -160,6 +176,8 @@ extern "C" {
     inline Form *list5(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5) { return cons(e1, cons(e2, cons(e3, cons(e4, cons(e5, NIL))))); }
 
     Form *listn(Form *e1, Form *e2, Form *e3, Form *e4, Form *e5, vector<Form*> &rest);
+
+    int count(Pair *p);
 }
 
 // inline bool nilp(Form *f) { return f == NIL; }

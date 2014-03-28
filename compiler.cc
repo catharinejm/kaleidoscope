@@ -1,90 +1,77 @@
 #include "compiler.h"
 
-#include <memory>
+NilExpr *const NIL_EXPR = new NilExpr();
 
-Compiler::Compiler() : _builder(getGlobalContext()) {
-    _mod = new Module("wombat", getGlobalContext());
+EnvList GLOBAL_DEFS;
 
-    string errs;
-    _exec_eng = EngineBuilder(_mod).setErrorStr(&errs).create();
-    if (!_exec_eng) {
-        cerr << "Could not create ExecutionEngine: " << errs << endl;
-        exit(1);
-    }
+Expr *Expr::parse(EnvList env, Form *f) {
+    if (! f) return NIL_EXPR;
+    if (Pair *p = dyn_cast<Pair>(f))
+        if (Symbol *s = dyn_cast<Symbol>(p->car())) {
+            if (s == Symbol::DEF) return DefExpr::parse(env, p);
+            if (s == Symbol::FN) return FnExpr::parse(env, p);
+            if (s == Symbol::QUOTE) return QuoteExpr::parse(env, p);
+            if (s == Symbol::DO) return DoExpr::parse(env, p);
+
+            return InvokeExpr::parse(env, p);
+        }
+    if (Number *n = dyn_cast<Number>(f))
+        return NumberExpr::parse(env, n);
+    if (Symbol *s = dyn_cast<Symbol>(f))
+        return SymbolExpr::parse(env, s);
+
+    throw CompileError("Unparsable form");
 }
 
-void Compiler::push_cursor(BasicBlock *bb) {
-    if (BasicBlock *cur_bb = _builder.GetInsertBlock())
-        _insert_pts.push_back(pair<BasicBlock*, BasicBlock::iterator>(cur_bb, _builder.GetInsertPoint()));
-
-    _builder.SetInsertPoint(bb);
-}
-
-void Compiler::pop_cursor() {
-    if (! _insert_pts.empty()) {
-        auto bb_pair = _insert_pts.back();
-        _builder.SetInsertPoint(bb_pair.first, bb_pair.second);
-        _insert_pts.pop_back();
-    }
-}
-
-Value *Compiler::form_ptr_val(Form *f) {
-    return ConstantInt::get(getGlobalContext(), APInt(64, (intptr_t)f));
-}
-
-Function *Compiler::compile_top_level(Form *f) {
-    return cast<Function>(compile(list3(Symbol::FN, NIL, f)));
-}
-
-Value *Compiler::resolve_local(Symbol *sym) {
-    for (auto rit = _env.rbegin(); rit != _env.rend(); ++rit) {
-        auto map_iter = rit->find(sym);
-        if (map_iter != rit->end())
-            return map_iter->second;
-    }
-    return nullptr;
-}
-
-void Compiler::push_local_env(map<Symbol*,Value*> env) {
-    _env.push_back(env);
-}
-void Compiler::pop_local_env() {
-    if (! _env.empty()) _env.pop_back();
-}
-
-Value *Compiler::compile(Form *f) {
-    if (Pair *p = dyn_cast_or_null<Pair>(f))
-        return compile_list(p);
-    if (Symbol *s = dyn_cast_or_null<Symbol>(f))
-        return compile_symbol(s);
+DefExpr *DefExpr::parse(EnvList env, Pair *lis) {
+    if (! lis->cdr())
+        throw CompileError("def requires an argument");
+    if (! listp(lis->cdr()))
+        throw CompileError("def must be a proper list");
+    Pair *bind_pair = cast<Pair>(lis->cdr());
+    if (! isa<Symbol>(bind_pair->car()))
+        throw CompileError("def must bind to a symbol");
+    if (count(lis) > 3)
+        throw CompileError("def takes at most one binding value");
     
-    return form_ptr_val(f);
-}
+    DefExpr *de = new DefExpr(lis);
+    de->_name = cast<Symbol>(bind_pair->car());
+    if (Pair *valp = dyn_cast_or_null<Pair>(bind_pair->cdr()))
+        de->_value = Expr::parse(env, valp->car());
 
-Value *Compiler::compile_symbol(Symbol *sym) {
-    Value *binding = resolve_local(sym);
-    if (! binding)
-        binding = _mod->getNamedValue(sym->name());
-
-    if (! binding)
-        throw CompileError("Undefined symbol: ", sym->name());
-
-    return _builder.CreateLoad(binding);
-}
-
-Value *Compiler::compile_fn(Pair *lis) {
-    static int n = -1;
-    cerr << "In compile_fn() - " << ++n << endl;
+    GLOBAL_DEFS.insert(EnvElem(de->_name, nullptr));
     
+    return de;
+}
+
+Value *DefExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
+    Constant *gv = mod->getNamedValue(_name->name());
+
+    Value *bind_value = _value->emit(C_EXPRESSION, mod, builder);
+    if (!gv)
+        gv = new GlobalVariable(*mod,
+                                bind_value->getType(),
+                                false,
+                                GlobalValue::ExternalLinkage,
+                                // value is purely external without init
+                                Constant::getNullValue(bind_value->getType()),
+                                _name->name());
+
+    GLOBAL_DEFS[_name] = bind_value;
+    return builder.CreateStore(bind_value, gv);
+}
+
+FnExpr *FnExpr::parse(EnvList env, Pair *lis) {
     Pair *body = dyn_cast_or_null<Pair>(lis->cdr());
     if (! body)
         throw CompileError("Invalid fn definition");
 
-    Symbol *name = dyn_cast_or_null<Symbol>(body->car());
-    if (name)
+    FnExpr *fe = new FnExpr(lis);
+        
+    if (Symbol *name_sym = dyn_cast_or_null<Symbol>(body->car())) {
         body = dyn_cast_or_null<Pair>(body->cdr());
-    else
-        name = Symbol::intern("anon");
+        fe->_name = name_sym;
+    }
         
     if (! body)
         throw CompileError("Invalid fn definition");
@@ -93,164 +80,158 @@ Value *Compiler::compile_fn(Pair *lis) {
     if (! listp(body->cdr()))
         throw CompileError("Function definition must be a proper list");
 
-    Pair *arglist = cast_or_null<Pair>(body->car());
-    vector<Symbol*> argvec;
+    Pair *loa = cast_or_null<Pair>(body->car());
     Symbol *a;
 
-    while(arglist) {
-        a = dyn_cast_or_null<Symbol>(arglist->car());
+    while(loa) {
+        a = dyn_cast_or_null<Symbol>(loa->car());
         if (!a) throw CompileError("Function args must be symbols");
-        argvec.push_back(a);
-        arglist = dyn_cast_or_null<Pair>(arglist->cdr());
+        _arglist.push_back(a);
+        loa = dyn_cast_or_null<Pair>(loa->cdr());
     }
+    Pair *body_forms = cast_or_null<Pair>(body->cdr());
+    fe->_body = Expr::parse(env, cons(Symbol::DO, body_forms));
 
+    return fe;
+}
+
+Value *FnExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
     FunctionType *ft = FunctionType::get(
-        Type::getInt64Ty(getGlobalContext()),
-        vector<Type*>(argvec.size(), Type::getInt64Ty(getGlobalContext())),
+        TypeBuilder<void*,false>,
+        vector<Type*>(argvec.size(), TypeBuilder<void*,false>),
         false);
     
-    Function *f = Function::Create(ft, Function::ExternalLinkage, name->name(), _mod);
+    Function *f = Function::Create(ft, Function::ExternalLinkage, "", mod);
+    if (_name)
+        _env.insert(EnvElem(_name, f));
 
     BasicBlock *bb = BasicBlock::Create(getGlobalContext(), "entry", f);
-    push_cursor(bb);
 
-    Pair * body_forms = cast_or_null<Pair>(body->cdr());
-
-    map<Symbol*, Value*> locals;
-    auto ai = argvec.begin();
+    auto ai = _arglist.begin();
     for (auto func_ai = f->arg_begin();
-         func_ai != f->arg_end() && ai != argvec.end();
+         func_ai != f->arg_end() && ai != _arglist.end();
          ++func_ai, ++ai)
     {
         func_ai->setName((*ai)->name());
-        locals.insert(pair<Symbol*, Value*>(*ai, func_ai));
+        _env.insert(EnvElem(*ai, func_ai));
     }
-    push_local_env(locals);
 
-    Value *ret = compile_do(cons(Symbol::DO, body_forms));
-    _builder.CreateRet(ret);
+    try {
+        Value *ret = _body->emit(C_EXPRESSION, mod, builder);
 
-    cerr << "****** " << n << ": ";
-    ret->getType()->dump();
-    cerr << endl;
+        _builder.CreateRet(ret);
 
-    verifyFunction(*f);
-    // TODO: Optimization passes
+        verifyFunction(*f);
+        // TODO: Optimization passes
+        return f;
 
-    pop_local_env();
-    pop_cursor();
-
-    --n;
-    return f;
+    } catch (CompilerException ce) {
+        f->eraseFromParent();
+        throw ce;
+    }
 }
 
-Value *Compiler::compile_do(Pair *lis) {
+QuoteExpr *QuoteExpr::parse(EnvList env, Pair *lis) {
     if (! listp(lis))
-        throw CompileError("'do' form must be a proper list");
+        throw CompileError("quote must be a proper list");
+    if (count(lis) != 2)
+        throw CompileError("quote takes exactly 1 argument");
 
-    Pair *forms = cast_or_null<Pair>(lis->cdr());
-    Value *rval = form_ptr_val(NIL);
-    while (forms) {
-        rval = compile(forms->car());
-        forms = cast_or_null<Pair>(forms->cdr());
-    }
-    return rval;
+    QuoteExpr *qe = new QuoteExpr(env, lis);
+    qe->_quoted = dyn_cast<Pair>(lis->cdr())->car();
+    return qe;
+};
+
+Value *QuoteExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
+    Constant *form_addr = ConstantInt::get(getGlobalContext(), APInt((intptr_t) _quoted));
+    return ConstantExpr::getIntToPtr(form_addr, TypeBuilder<void*,false>);
 }
 
-Value *Compiler::compile_list(Pair *lis) {
-    Form *car = lis->car();
-    Function *fn = nullptr;
-    if (Pair *p  = dyn_cast_or_null<Pair>(car))
-        fn = dyn_cast_or_null<Function>(compile_list(p));
-    if (Symbol *sym = dyn_cast_or_null<Symbol>(car)) {
-        if (sym == Symbol::DEF)
-            return compile_def(lis);
-        if (sym == Symbol::QUOTE)
-            return compile_quote(lis);
-        if (sym == Symbol::FN)
-            return compile_fn(lis);
-        if (sym == Symbol::DO)
-            return compile_do(lis);
-        fn = dyn_cast_or_null<Function>(compile_symbol(sym));
-    }
-
-    // cerr << "COMPILE DEBUG: " << print_form(lis) << endl;
-
-    if (! fn)
-        throw CompileError("Invalid function invocation");
+DoExpr *DoExpr::parse(EnvList env, Pair *lis) {
+    DoExpr *de = new DoExpr(e, lis);
 
     if (! listp(lis))
-        throw CompileError("Function call must be a proper list.");
-
-    Pair *args = cast_or_null<Pair>(lis->cdr());
-    std::vector<Value*> argvec;
-    while (args) {
-        argvec.push_back(compile(args->car()));
-        args = cast_or_null<Pair>(args->cdr());
+        throw CompileError("do must be a proper list");
+    if (! lis->cdr()) {
+        de->_ret_expr = NIL_EXPR;
+        return de;
     }
+
+    Pair *rest = dyn_cast<Pair>(lis->cdr());
+    while (rest) {
+        de->_statements.push_back(Expr::parse(e, rest->car()));
+        rest = dyn_cast_or_null<Pair>(rest->cdr());
+    }
+    de->_ret_expr = de->_statements.back();
+    de->_statements.pop_back();
+    return de;
+}
+
+Value *DoExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
+    for (Expr *e : _statements)
+        e->emit(C_STATEMENT, mod, builder);
+    return _ret_expr->emit(ctx, mod, builder);
+}
+
+Value *NilExpr::emit(EnvList e, Pair *lis) {
+    return ConstantPointerNull::get(types::i<8>);
+}
+
+NumberExpr *NumberExpr::parse(EnvList env, Number *n) {
+    return new NumberExpr(env, n);
+}
+
+Value *NumberExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
+    Constant *form_addr = ConstantInt::get(getGlobalContext(), APInt((intptr_t) _form));
+    return ConstantExpr::getIntToPtr(form_addr, TypeBuilder<void*,false>);
+}
+
+SymbolExpr *SymbolExpr::parse(EnvList env, Symbol *s) {
+    if (env.find(s) == env.end())
+        if (GLOBAL_DEFS.find(s) == GLOBAL_DEFS.end())
+            throw CompileError("Undefined symbol: ", s->name());
+
+    return new SymbolExpr(env, s);
+}
+
+Value *SymbolExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
+    if (_env.find(_sym) == _env.end() && GLOBAL_DEFS.find(_sym) == GLOBAL_DEFS.end())
+        throw CompileError("CRITICAL ERROR: Undefined symbol in emit! ", _sym->name());
     
-    return _builder.CreateCall(fn, argvec, fn->getName());
+    auto v_iter = _env.find(_sym);
+    if (v_iter == _env.end())
+        v_iter = GLOBAL_DEFS.find(_sym);
+    
+    if (! *v_iter)
+        throw CompileError("Unbound symbol: ", _sym->name());
+    return *v_iter;
 }
 
-Value *Compiler::compile_quote(Pair *lis) {
-    if (! lis->cdr())
-        throw CompileError("Quote takes exactly one argument");
+InvokeExpr *InvokeExpr::parse(EnvList env, Pair *lis) {
     if (! listp(lis))
-        throw CompileError("Quote must be a proper list");
-    Pair *quoted_form = cast<Pair>(lis->cdr());
-    if (quoted_form->cdr())
-        throw CompileError("Quote takes exactly one argument");
+        throw CompileError("function invokation must be a proper list");
 
-    return form_ptr_val(quoted_form->car());
+    InvokeExpr *ie = new InvokeExpr(env, lis);
+    ie->_func = Expr::parse(lis->car());
+
+    Pair *rest = lis->cdr();
+    while (rest) {
+        ie->_params.push_back(Expr::parse(env, rest->car()));
+        rest = dyn_cast_or_null<Pair>(rest->cdr());
+    }
+    return ie;
 }
 
-Value *Compiler::compile_def(Pair *lis) {
-    if (! lis->cdr())
-        throw CompileError("def requires an argument");
-    if (! isa<Pair>(lis->cdr()))
-        throw CompileError("def must be a proper list");
-    Pair *bind_pair = cast<Pair>(lis->cdr());
-    if (! isa<Symbol>(bind_pair->car()))
-        throw CompileError("def must bind to a symbol");
-    if (! listp(bind_pair->cdr()))
-        throw CompileError("def must be a proper list");
+Value *InvokeExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
+    Function *f = dyn_cast_or_null<Function>(_func->emit(C_EXPRESSION, mod, builder));
+    if (! f)
+        throw CompileError("Invalid function: ", print_form(_func->form()));
+    if (f->arg_size() != _params.size())
+        throw CompileError(string("Wrong number of params: ") + _params.size() + " for " + f->arg_size());
 
-    Symbol *bind_name = cast<Symbol>(bind_pair->car());
+    vector<Value*> args;
+    for (Expr *e : _params)
+        args.push_back(e->emit(C_EXPRESSION, mod, builder));
 
-    Value *bind_value;
-    Pair *val_form = cast_or_null<Pair>(bind_pair->cdr());
-    if (val_form) {
-        if (val_form->cdr())
-            throw CompileError("def takes at most one value");
-        bind_value = compile(val_form->car());
-    } else
-        bind_value = form_ptr_val(NIL);
-        
-    if (cast<Pair>(bind_pair->cdr())->cdr())
-        throw CompileError("def requires exactly one binding value");
-
-    Constant *gv = _mod->getNamedValue(bind_name->name());
-
-    if (!gv)
-        gv = new GlobalVariable(*_mod,
-                                bind_value->getType(),
-                                false,
-                                GlobalValue::ExternalLinkage,
-                                // value is purely external without init
-                                Constant::getNullValue(bind_value->getType()),
-                                bind_name->name());
-
-
-    _builder.CreateStore(bind_value, gv);
-    return bind_value;
+    return builder.CreateCall(f, args);
 }
-
-Form *Compiler::eval(Form *input) {
-    Function *f = compile_top_level(input);
-    return ((Form *(*)())get_fn_ptr(f))();
-}
-
-void *Compiler::get_fn_ptr(Function *f) {
-    return _exec_eng->getPointerToFunction(f);
-}
-

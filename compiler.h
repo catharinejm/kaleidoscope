@@ -1,6 +1,6 @@
 // -*- mode: c++ -*-
-#ifndef _WOMBAT_COMPILER_H
-#define _WOMBAT_COMPILER_H
+#ifndef WOMBAT_COMPILER_H
+#define WOMBAT_COMPILER_H
 
 #include "llvm/Analysis/Passes.h"
 #include "llvm/Analysis/Verifier.h"
@@ -17,7 +17,8 @@
 
 #include "lisp.h"
 
-#include <map>
+#include <vector>
+#include <unordered_map>
 
 using namespace llvm;
 using namespace std;
@@ -28,44 +29,148 @@ public:
     CompileError(string m, string n) : LispException(m + n) {}
 };
 
-class Compiler {
+typedef unordered_map<Symbol*,Value*> EnvList;
+typedef pair<Symbol*,Value*> EnvElem;
 
-    Module *_mod;
-    ExecutionEngine *_exec_eng;
-    IRBuilder<> _builder;
+class Expr : public gc {
+public:
+    enum ExprKind {
+        EK_DefExpr,
+        EK_QuoteExpr,
+        EK_FnExpr,
+        EK_DoExpr,
+        EK_NilExpr,
+        EK_NumberExpr,
+        EK_SymbolExpr,
+        EK_InvokeExpr,
+    };
 
-    vector<map<Symbol*,Value*> > _env;
-    vector<pair<BasicBlock*, BasicBlock::iterator> > _insert_pts;
+    enum Context {
+        C_STATEMENT,  //value ignored
+        C_EXPRESSION, //value required
+        C_RETURN,     //tail position relative to enclosing recur frame
+        C_EVAL,
+    };
+
+    virtual ~Expr() {};
+    const ExprKind getKind() const { return _kind; }
+ 
+    static Expr *parse(EnvList env, Form *f);
+
+    virtual Form *form() = 0;
+    virtual Pair *pair() { return dyn_cast_or_null<Pair>(form()); }
+    virtual Symbol *symbol() { return dyn_cast_or_null<Symbol>(form()); }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder) = 0;
+private:
+    ExprKind _kind;
+    EnvList _env;
+protected:
+    Expr(EnvList e, ExprKind ek) : _env(e), _kind(ek) {}
+};
+
+class DefExpr : public Expr {
+    Pair *_form;
+
+    Symbol *_name;
+    Expr *_value;
+
+    DefExpr(EnvList e, Pair *p) : Expr(e, EK_DefExpr), _form(p) {}
+
+public:
+    static bool classof(const Expr *e) { return e->getKind() == EK_DefExpr; }
+    static DefExpr *parse(EnvList env, Pair *lis);
+
+    virtual Form *form() { return _form; }
+};
+
+class FnExpr : public Expr {
+    Pair *_form;
+
+    Symbol *_name;
+    vector<Symbol*> _arglist;
+    Expr *_body;
+
+    FnExpr(EnvList e, Pair *p) : Expr(e, EK_FnExpr), _form(p) {}
     
 public:
+    static bool classof(const Expr *e) { return e->getKind() == EK_FnExpr; }
+    static FnExpr *parse(EnvList env, Pair *lis);
 
-    Compiler();
+    virtual Form *form() { return _form; }
+};
 
-    Function *compile_top_level(Form *f);
+class QuoteExpr : public Expr {
+    Pair *_form;
 
-    void push_cursor(BasicBlock *bb);
-    void pop_cursor();
+    Form *_quoted;
+    QuoteExpr(EnvList e, Pair *p) : Expr(e, EK_QuoteExpr), _form(p) {}
 
-    void dump() { _mod->dump(); }
+public:
+    static bool classof(const Expr *e) { return e->getKind() == EK_QuoteExpr; }
+    static QuoteExpr *parse(EnvList env, Pair *lis);
 
-    Value *resolve_local(Symbol *sym);
+    virtual Form *form() { return _form; }
+};
 
-    void push_local_env(map<Symbol*,Value*> env);
-    void pop_local_env();
-    
-    Value *compile(Form *f);
-    Value *compile_list(Pair *lis);
-    Value *compile_symbol(Symbol *sym);
-    Value *compile_quote(Pair *lis);
-    Value *compile_do(Pair *lis);
-    Value *compile_def(Pair *lis);
-    Value *compile_fn(Pair *lis);
+class DoExpr : public Expr {
+    Pair *_form;
 
-    Value *form_ptr_val(Form *f);
-    
-    void *get_fn_ptr(Function *f);
+    vector<Expr*> _statements;
+    Expr *_ret_expr;
 
-    Form *eval(Form *input);
+    DoExpr(EnvList e, Pair *p) : Expr(e, EK_DoExpr), _form(p) {}
+
+public:
+    static bool classof(const Expr *e) { return e->getKind() == EK_DoExpr; }
+    static DoExpr *parse(EnvList e, Pair *lis);
+
+    virtual Form *form() { return _form; }
+};
+
+class NilExpr : public Expr {
+public:
+    NilExpr() : Expr(EnvList(), EK_NilExpr) {}
+
+    virtual Form *form() { return nullptr; }
+};
+
+class NumberExpr : public Expr {
+    Number *_form;
+
+    NumberExpr(EnvList e, Number *n) : Expr(e, EK_NumberExpr), _form(n) {}
+
+public:
+    static bool classof(const Expr *e) { return e->getKind() == EK_NumberExpr; }
+    static NumberExpr *parse(EnvList e, Number *n);
+
+    virtual Form *form() { return _form; }
+};
+
+class SymbolExpr : public Expr {
+    Symbol *_sym;
+
+    SymbolExpr(EnvList e, Symbol *s) : Expr(e, EK_SymbolExpr), _sym(s) {}
+
+public:
+    static bool classof(const Expr *e) { return e->getKind() == EK_SymbolExpr; }
+    static SymbolExpr *parse(EnvList e, Symbol *s);
+
+    virtual Form *form() { return _sym; }
+};
+
+class InvokeExpr : public Expr {
+    Pair *_form;
+
+    Expr *_func;
+    vector<Expr*> _params;
+
+    InvokeExpr(EnvList e, Pair *lis) : Expr(e, EK_InvokeExpr), _form(lis) {}
+
+public:
+    static bool classof(const Expr *e) { return e->getKind() == EK_InvokeExpr; }
+    static InvokeExpr *parse(EnvList e, Symbol *s);
+
+    virtual Form *form() { return _sym; }
 };
 
 #endif
