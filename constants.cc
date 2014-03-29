@@ -28,10 +28,10 @@ int count(Pair *p) {
     int c = 1;
     for (;;) {
         if (p->cdr()) {
-            ++c
+            ++c;
             if (! (p = dyn_cast<Pair>(p->cdr())))
                 return c;
         } else
-            return c
+            return c;
     }
 }

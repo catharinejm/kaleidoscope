@@ -11,6 +11,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/TypeBuilder.h"
 #include "llvm/PassManager.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Transforms/Scalar.h"
@@ -61,10 +62,11 @@ public:
     virtual Pair *pair() { return dyn_cast_or_null<Pair>(form()); }
     virtual Symbol *symbol() { return dyn_cast_or_null<Symbol>(form()); }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder) = 0;
-private:
+
+protected:
     ExprKind _kind;
     EnvList _env;
-protected:
+
     Expr(EnvList e, ExprKind ek) : _env(e), _kind(ek) {}
 };
 
@@ -81,6 +83,7 @@ public:
     static DefExpr *parse(EnvList env, Pair *lis);
 
     virtual Form *form() { return _form; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 class FnExpr : public Expr {
@@ -97,6 +100,7 @@ public:
     static FnExpr *parse(EnvList env, Pair *lis);
 
     virtual Form *form() { return _form; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 class QuoteExpr : public Expr {
@@ -110,6 +114,7 @@ public:
     static QuoteExpr *parse(EnvList env, Pair *lis);
 
     virtual Form *form() { return _form; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 class DoExpr : public Expr {
@@ -125,6 +130,7 @@ public:
     static DoExpr *parse(EnvList e, Pair *lis);
 
     virtual Form *form() { return _form; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 class NilExpr : public Expr {
@@ -132,6 +138,7 @@ public:
     NilExpr() : Expr(EnvList(), EK_NilExpr) {}
 
     virtual Form *form() { return nullptr; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 class NumberExpr : public Expr {
@@ -144,6 +151,7 @@ public:
     static NumberExpr *parse(EnvList e, Number *n);
 
     virtual Form *form() { return _form; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 class SymbolExpr : public Expr {
@@ -156,6 +164,7 @@ public:
     static SymbolExpr *parse(EnvList e, Symbol *s);
 
     virtual Form *form() { return _sym; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 class InvokeExpr : public Expr {
@@ -168,9 +177,10 @@ class InvokeExpr : public Expr {
 
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_InvokeExpr; }
-    static InvokeExpr *parse(EnvList e, Symbol *s);
+    static InvokeExpr *parse(EnvList e, Pair *s);
 
-    virtual Form *form() { return _sym; }
+    virtual Form *form() { return _form; }
+    virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
 };
 
 #endif

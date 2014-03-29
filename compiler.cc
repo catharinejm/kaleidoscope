@@ -1,4 +1,5 @@
 #include "compiler.h"
+#include <sstream>
 
 NilExpr *const NIL_EXPR = new NilExpr();
 
@@ -34,7 +35,7 @@ DefExpr *DefExpr::parse(EnvList env, Pair *lis) {
     if (count(lis) > 3)
         throw CompileError("def takes at most one binding value");
     
-    DefExpr *de = new DefExpr(lis);
+    DefExpr *de = new DefExpr(env, lis);
     de->_name = cast<Symbol>(bind_pair->car());
     if (Pair *valp = dyn_cast_or_null<Pair>(bind_pair->cdr()))
         de->_value = Expr::parse(env, valp->car());
@@ -66,7 +67,7 @@ FnExpr *FnExpr::parse(EnvList env, Pair *lis) {
     if (! body)
         throw CompileError("Invalid fn definition");
 
-    FnExpr *fe = new FnExpr(lis);
+    FnExpr *fe = new FnExpr(env, lis);
         
     if (Symbol *name_sym = dyn_cast_or_null<Symbol>(body->car())) {
         body = dyn_cast_or_null<Pair>(body->cdr());
@@ -86,7 +87,7 @@ FnExpr *FnExpr::parse(EnvList env, Pair *lis) {
     while(loa) {
         a = dyn_cast_or_null<Symbol>(loa->car());
         if (!a) throw CompileError("Function args must be symbols");
-        _arglist.push_back(a);
+        fe->_arglist.push_back(a);
         loa = dyn_cast_or_null<Pair>(loa->cdr());
     }
     Pair *body_forms = cast_or_null<Pair>(body->cdr());
@@ -97,8 +98,8 @@ FnExpr *FnExpr::parse(EnvList env, Pair *lis) {
 
 Value *FnExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
     FunctionType *ft = FunctionType::get(
-        TypeBuilder<void*,false>,
-        vector<Type*>(argvec.size(), TypeBuilder<void*,false>),
+        TypeBuilder<void*,false>::get(getGlobalContext()),
+        vector<Type*>(_arglist.size(), TypeBuilder<void*,false>::get(getGlobalContext())),
         false);
     
     Function *f = Function::Create(ft, Function::ExternalLinkage, "", mod);
@@ -119,13 +120,13 @@ Value *FnExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
     try {
         Value *ret = _body->emit(C_EXPRESSION, mod, builder);
 
-        _builder.CreateRet(ret);
+        builder.CreateRet(ret);
 
         verifyFunction(*f);
         // TODO: Optimization passes
         return f;
 
-    } catch (CompilerException ce) {
+    } catch (CompileError ce) {
         f->eraseFromParent();
         throw ce;
     }
@@ -143,12 +144,12 @@ QuoteExpr *QuoteExpr::parse(EnvList env, Pair *lis) {
 };
 
 Value *QuoteExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
-    Constant *form_addr = ConstantInt::get(getGlobalContext(), APInt((intptr_t) _quoted));
-    return ConstantExpr::getIntToPtr(form_addr, TypeBuilder<void*,false>);
+    Constant *form_addr = ConstantInt::get(getGlobalContext(), APInt(64, (intptr_t) _quoted));
+    return ConstantExpr::getIntToPtr(form_addr, TypeBuilder<void*,false>::get(getGlobalContext()));
 }
 
 DoExpr *DoExpr::parse(EnvList env, Pair *lis) {
-    DoExpr *de = new DoExpr(e, lis);
+    DoExpr *de = new DoExpr(env, lis);
 
     if (! listp(lis))
         throw CompileError("do must be a proper list");
@@ -159,7 +160,7 @@ DoExpr *DoExpr::parse(EnvList env, Pair *lis) {
 
     Pair *rest = dyn_cast<Pair>(lis->cdr());
     while (rest) {
-        de->_statements.push_back(Expr::parse(e, rest->car()));
+        de->_statements.push_back(Expr::parse(env, rest->car()));
         rest = dyn_cast_or_null<Pair>(rest->cdr());
     }
     de->_ret_expr = de->_statements.back();
@@ -173,8 +174,8 @@ Value *DoExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
     return _ret_expr->emit(ctx, mod, builder);
 }
 
-Value *NilExpr::emit(EnvList e, Pair *lis) {
-    return ConstantPointerNull::get(types::i<8>);
+Value *NilExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
+    return ConstantPointerNull::get(TypeBuilder<void*,false>::get(getGlobalContext()));
 }
 
 NumberExpr *NumberExpr::parse(EnvList env, Number *n) {
@@ -182,8 +183,8 @@ NumberExpr *NumberExpr::parse(EnvList env, Number *n) {
 }
 
 Value *NumberExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
-    Constant *form_addr = ConstantInt::get(getGlobalContext(), APInt((intptr_t) _form));
-    return ConstantExpr::getIntToPtr(form_addr, TypeBuilder<void*,false>);
+    Constant *form_addr = ConstantInt::get(getGlobalContext(), APInt(64, (intptr_t) _form));
+    return ConstantExpr::getIntToPtr(form_addr, TypeBuilder<void*,false>::get(getGlobalContext()));
 }
 
 SymbolExpr *SymbolExpr::parse(EnvList env, Symbol *s) {
@@ -202,9 +203,9 @@ Value *SymbolExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
     if (v_iter == _env.end())
         v_iter = GLOBAL_DEFS.find(_sym);
     
-    if (! *v_iter)
+    if (! v_iter->second)
         throw CompileError("Unbound symbol: ", _sym->name());
-    return *v_iter;
+    return v_iter->second;
 }
 
 InvokeExpr *InvokeExpr::parse(EnvList env, Pair *lis) {
@@ -212,9 +213,9 @@ InvokeExpr *InvokeExpr::parse(EnvList env, Pair *lis) {
         throw CompileError("function invokation must be a proper list");
 
     InvokeExpr *ie = new InvokeExpr(env, lis);
-    ie->_func = Expr::parse(lis->car());
+    ie->_func = Expr::parse(env, lis->car());
 
-    Pair *rest = lis->cdr();
+    Pair *rest = dyn_cast_or_null<Pair>(lis->cdr());
     while (rest) {
         ie->_params.push_back(Expr::parse(env, rest->car()));
         rest = dyn_cast_or_null<Pair>(rest->cdr());
@@ -226,8 +227,11 @@ Value *InvokeExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
     Function *f = dyn_cast_or_null<Function>(_func->emit(C_EXPRESSION, mod, builder));
     if (! f)
         throw CompileError("Invalid function: ", print_form(_func->form()));
-    if (f->arg_size() != _params.size())
-        throw CompileError(string("Wrong number of params: ") + _params.size() + " for " + f->arg_size());
+    if (f->arg_size() != _params.size()) {
+        stringstream ss;
+        ss << "Wrong number of params: " << _params.size() << " for " << f->arg_size();
+        throw CompileError(ss.str());
+    }
 
     vector<Value*> args;
     for (Expr *e : _params)
