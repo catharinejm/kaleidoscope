@@ -66,7 +66,7 @@ Value *DefExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
                                 Constant::getNullValue(bind_value->getType()),
                                 _name->name());
 
-    GLOBAL_DEFS[_name] = bind_value;
+    GLOBAL_DEFS[_name] = gv;
     builder.CreateStore(bind_value, gv);
     return bind_value;
 }
@@ -147,6 +147,8 @@ Value *FnExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
         Value *cast_ret = builder.CreatePointerCast(ret, TypeBuilder<void*,false>::get(getGlobalContext()));
         builder.CreateRet(cast_ret);
 
+        LOCALS.pop_back();
+
         f->dump();
         // mod->dump();
 
@@ -158,6 +160,7 @@ Value *FnExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
 
     } catch (CompileError &ce) {
         f->eraseFromParent();
+        LOCALS.clear();
         throw ce;
     }
 }
@@ -218,38 +221,44 @@ Value *NumberExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
     return form_ptr(_form);
 }
 
-Value *resolve_symbol(Symbol *s) {
+Value *resolve_local(Symbol *s) {
     for (auto ri = LOCALS.rbegin(); ri != LOCALS.rend(); ri++) {
         auto lcl = ri->find(s);
         if (lcl != ri->end())
             return lcl->second;
     }
 
-    auto gbl = GLOBAL_DEFS.find(s);
-    if (gbl != GLOBAL_DEFS.end())
-        return gbl->second;
-    
-    throw CompileError("Undefined symbol: ", s->name());
+    return nullptr;
 }
 
 SymbolExpr *SymbolExpr::parse(Symbol *s) {
     cerr << "SymbolExpr::parse - " << print_form(s) << endl;
 
-    resolve_symbol(s); // Throws if undefined
+    if (! resolve_local(s) && GLOBAL_DEFS.find(s) == GLOBAL_DEFS.end())
+        throw CompileError("Undefined symbol: ", s->name());
+
     return new SymbolExpr(s);
 }
 
 Value *SymbolExpr::emit(Expr::Context ctx, Module *mod, IRBuilder<> &builder) {
-    Value *symval = resolve_symbol(_sym);
+    Value *symval = resolve_local(_sym);
+    if (symval) return symval;
+    
+    auto gbl = GLOBAL_DEFS.find(_sym);
+    if (gbl == GLOBAL_DEFS.end())
+        throw CompileError("CRITICAL ERROR: Unbound symbol in emit! ", _sym->name());
+
+    symval = gbl->second;
     if (!symval)
         throw CompileError("Unbound symbol: ", _sym->name());
-    return symval;
+
+    return builder.CreateLoad(symval);
 }
 
 InvokeExpr *InvokeExpr::parse(Pair *lis) {
     cerr << "InvokeExpr::parse - " << print_form(lis) << endl;
     if (! listp(lis))
-        throw CompileError("function invokation must be a proper list");
+        throw CompileError("function invocation must be a proper list");
 
     InvokeExpr *ie = new InvokeExpr(lis);
     ie->_func = Expr::parse(lis->car());
