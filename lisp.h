@@ -1,4 +1,4 @@
-// -*- mode: c++ -*-
+// -*- mode: c++ -*-xcep
 #ifndef _WOMBAT_READER_H
 #define _WOMBAT_READER_H
 
@@ -144,7 +144,6 @@ public:
     Fn(Pair *s, Function *f) : Form(FK_Fn), _src(s), _fn(f) {}
 
     static bool classof(const Form *f) { return f->getKind() == FK_Fn; }
-    static bool classof(const Value *v) { return Function::classof(v); }
 
     Pair *src() { return _src; }
     Function *fn() { return _fn; }
@@ -166,6 +165,8 @@ string print_symbol(Symbol *s);
 
 extern "C" {
     bool listp(Form *p);
+
+    Form *invoke(Fn *fn);
 
     inline Pair *cons(Form *a, Form *d) { return new Pair(a, d); }
 

@@ -30,8 +30,9 @@ public:
     CompileError(string m, string n) : LispException(m + n) {}
 };
 
-typedef unordered_map<Symbol*,Value*> EnvList;
+typedef unordered_map<Symbol*,Value*> EnvMap;
 typedef pair<Symbol*,Value*> EnvElem;
+typedef vector<EnvMap> EnvList;
 
 class Expr : public gc {
 public:
@@ -56,7 +57,7 @@ public:
     virtual ~Expr() {};
     const ExprKind getKind() const { return _kind; }
  
-    static Expr *parse(EnvList env, Form *f);
+    static Expr *parse(Form *f);
 
     virtual Form *form() = 0;
     virtual Pair *pair() { return dyn_cast_or_null<Pair>(form()); }
@@ -65,9 +66,8 @@ public:
 
 protected:
     ExprKind _kind;
-    EnvList _env;
 
-    Expr(EnvList e, ExprKind ek) : _env(e), _kind(ek) {}
+    Expr(ExprKind ek) : _kind(ek) {}
 };
 
 class DefExpr : public Expr {
@@ -76,11 +76,11 @@ class DefExpr : public Expr {
     Symbol *_name;
     Expr *_value;
 
-    DefExpr(EnvList e, Pair *p) : Expr(e, EK_DefExpr), _form(p) {}
+    DefExpr(Pair *p) : Expr(EK_DefExpr), _form(p) {}
 
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_DefExpr; }
-    static DefExpr *parse(EnvList env, Pair *lis);
+    static DefExpr *parse(Pair *lis);
 
     virtual Form *form() { return _form; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
@@ -93,11 +93,13 @@ class FnExpr : public Expr {
     vector<Symbol*> _arglist;
     Expr *_body;
 
-    FnExpr(EnvList e, Pair *p) : Expr(e, EK_FnExpr), _form(p) {}
+    EnvList::reverse_iterator _env_i;
+
+    FnExpr(Pair *p) : Expr(EK_FnExpr), _form(p) {}
     
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_FnExpr; }
-    static FnExpr *parse(EnvList env, Pair *lis);
+    static FnExpr *parse(Pair *lis);
 
     virtual Form *form() { return _form; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
@@ -107,11 +109,11 @@ class QuoteExpr : public Expr {
     Pair *_form;
 
     Form *_quoted;
-    QuoteExpr(EnvList e, Pair *p) : Expr(e, EK_QuoteExpr), _form(p) {}
+    QuoteExpr(Pair *p) : Expr(EK_QuoteExpr), _form(p) {}
 
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_QuoteExpr; }
-    static QuoteExpr *parse(EnvList env, Pair *lis);
+    static QuoteExpr *parse(Pair *lis);
 
     virtual Form *form() { return _form; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
@@ -123,11 +125,11 @@ class DoExpr : public Expr {
     vector<Expr*> _statements;
     Expr *_ret_expr;
 
-    DoExpr(EnvList e, Pair *p) : Expr(e, EK_DoExpr), _form(p) {}
+    DoExpr(Pair *p) : Expr(EK_DoExpr), _form(p) {}
 
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_DoExpr; }
-    static DoExpr *parse(EnvList e, Pair *lis);
+    static DoExpr *parse(Pair *lis);
 
     virtual Form *form() { return _form; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
@@ -135,7 +137,7 @@ public:
 
 class NilExpr : public Expr {
 public:
-    NilExpr() : Expr(EnvList(), EK_NilExpr) {}
+    NilExpr() : Expr(EK_NilExpr) {}
 
     virtual Form *form() { return nullptr; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
@@ -144,11 +146,11 @@ public:
 class NumberExpr : public Expr {
     Number *_form;
 
-    NumberExpr(EnvList e, Number *n) : Expr(e, EK_NumberExpr), _form(n) {}
+    NumberExpr(Number *n) : Expr(EK_NumberExpr), _form(n) {}
 
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_NumberExpr; }
-    static NumberExpr *parse(EnvList e, Number *n);
+    static NumberExpr *parse(Number *n);
 
     virtual Form *form() { return _form; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
@@ -157,11 +159,11 @@ public:
 class SymbolExpr : public Expr {
     Symbol *_sym;
 
-    SymbolExpr(EnvList e, Symbol *s) : Expr(e, EK_SymbolExpr), _sym(s) {}
+    SymbolExpr(Symbol *s) : Expr(EK_SymbolExpr), _sym(s) {}
 
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_SymbolExpr; }
-    static SymbolExpr *parse(EnvList e, Symbol *s);
+    static SymbolExpr *parse(Symbol *s);
 
     virtual Form *form() { return _sym; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
@@ -173,11 +175,11 @@ class InvokeExpr : public Expr {
     Expr *_func;
     vector<Expr*> _params;
 
-    InvokeExpr(EnvList e, Pair *lis) : Expr(e, EK_InvokeExpr), _form(lis) {}
+    InvokeExpr(Pair *lis) : Expr(EK_InvokeExpr), _form(lis) {}
 
 public:
     static bool classof(const Expr *e) { return e->getKind() == EK_InvokeExpr; }
-    static InvokeExpr *parse(EnvList e, Pair *s);
+    static InvokeExpr *parse(Pair *s);
 
     virtual Form *form() { return _form; }
     virtual Value *emit(Context ctx, Module *mod, IRBuilder<> &builder);
